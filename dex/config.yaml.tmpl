@@ -22,7 +22,11 @@ staticClients:
     secret: "{{HEADSCALE_OIDC_SECRET}}"
     redirectURIs:
       - https://{{HEADSCALE_HOST}}/oidc/callback
-{{APP_CLIENT_BLOCK}}
+  # Lore application client. Public (no secret) so the OAuth 2.0 device flow
+  # works from the CLI. The id doubles as the hostname and the token audience.
+  - id: {{LORE_HOST}}
+    name: {{LORE_HOST}}
+    public: true
 # Demo user store. Replace with a real connector (GitHub, LDAP, SAML, ...)
 # for actual use; connectors also unlock the `groups` claim.
 enablePasswordDB: true

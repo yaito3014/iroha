@@ -21,14 +21,14 @@ while IFS= read -r line || [ -n "$line" ]; do
     export "$key=$val"
 done < .env
 
-for v in HEADSCALE_HOST DEX_HOST TAILNET_BASE_DOMAIN ADMIN_EMAIL ADMIN_PASSWORD_HASH; do
+for v in HEADSCALE_HOST DEX_HOST TAILNET_BASE_DOMAIN LORE_HOST ADMIN_EMAIL ADMIN_PASSWORD_HASH; do
     eval "val=\${$v:-}"
     [ -n "$val" ] || { echo "error: $v is not set in .env" >&2; exit 1; }
 done
 
 case "$TAILNET_BASE_DOMAIN" in
-    "$HEADSCALE_HOST"|"$DEX_HOST")
-        echo "error: TAILNET_BASE_DOMAIN must differ from HEADSCALE_HOST/DEX_HOST" >&2; exit 1 ;;
+    "$HEADSCALE_HOST"|"$DEX_HOST"|"$LORE_HOST")
+        echo "error: TAILNET_BASE_DOMAIN must differ from the service hostnames" >&2; exit 1 ;;
 esac
 
 # Generate the Headscale<->Dex OIDC secret once and persist it in .env.
@@ -42,21 +42,14 @@ if [ -z "${HEADSCALE_OIDC_SECRET:-}" ]; then
     echo "generated HEADSCALE_OIDC_SECRET (stored in .env)"
 fi
 
-# Optional application client (public, device-flow; id doubles as the
-# hostname clients dial — see README).
-APP_CLIENT_BLOCK=""
-if [ -n "${APP_CLIENT_ID:-}" ]; then
-    APP_CLIENT_BLOCK=$(printf '\n  # Application client (device flow, public)\n  - id: %s\n    name: %s\n    public: true\n' "$APP_CLIENT_ID" "$APP_CLIENT_ID")
-fi
-
 render() {
     # $1: template path, $2: output path
     python3 - "$1" "$2" <<'PYEOF'
 import os, sys
 tmpl, out = sys.argv[1], sys.argv[2]
 text = open(tmpl).read()
-keys = ["HEADSCALE_HOST", "DEX_HOST", "TAILNET_BASE_DOMAIN", "ADMIN_EMAIL",
-        "ADMIN_PASSWORD_HASH", "HEADSCALE_OIDC_SECRET", "APP_CLIENT_BLOCK"]
+keys = ["HEADSCALE_HOST", "DEX_HOST", "TAILNET_BASE_DOMAIN", "LORE_HOST",
+        "ADMIN_EMAIL", "ADMIN_PASSWORD_HASH", "HEADSCALE_OIDC_SECRET"]
 for k in keys:
     text = text.replace("{{%s}}" % k, os.environ.get(k, ""))
 if "{{" in text:
@@ -66,8 +59,8 @@ print(f"rendered {out}")
 PYEOF
 }
 
-export HEADSCALE_HOST DEX_HOST TAILNET_BASE_DOMAIN ADMIN_EMAIL ADMIN_PASSWORD_HASH \
-       HEADSCALE_OIDC_SECRET APP_CLIENT_BLOCK
+export HEADSCALE_HOST DEX_HOST TAILNET_BASE_DOMAIN LORE_HOST ADMIN_EMAIL ADMIN_PASSWORD_HASH \
+       HEADSCALE_OIDC_SECRET
 
 render caddy/Caddyfile.tmpl        caddy/Caddyfile
 render dex/config.yaml.tmpl        dex/config.yaml
