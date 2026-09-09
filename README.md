@@ -61,7 +61,7 @@ docker compose exec headscale headscale nodes list
   connections keep working — only joins, re-auth, and config pushes stop.
   Back up the `headscale-data` and `dex-data` volumes; Caddy re-issues
   certificates by itself.
-- **Node expiry is disabled** (`node.expiry: 0`) so unattended machines
+- **Node expiry is disabled** (`oidc.expiry: "0"`) so unattended machines
   don't silently fall off the tailnet; expire lost devices manually.
 - **Headscale's config schema moves between releases.** The rendered
   `headscale/config.yaml` contains only the load-bearing values; merging it
