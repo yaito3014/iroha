@@ -12,6 +12,12 @@ while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in ''|'#'*) continue ;; esac
     key=${line%%=*}
     val=${line#*=}
+    # Strip one layer of surrounding single quotes. Values containing `$`
+    # (bcrypt hashes) are single-quoted in .env so `docker compose` won't try
+    # to interpolate them; setup.sh must still see the raw value.
+    case $val in
+        \'*\') val=${val#\'}; val=${val%\'} ;;
+    esac
     export "$key=$val"
 done < .env
 
