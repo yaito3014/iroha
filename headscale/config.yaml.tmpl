@@ -28,6 +28,10 @@ derp:
 dns:
   magic_dns: true
   base_domain: {{TAILNET_BASE_DOMAIN}}
+  # headscale 0.26 flipped this default to true; when true, dns.nameservers.global
+  # becomes mandatory or the server refuses to start. Respect each node's own DNS
+  # resolver by keeping it explicitly false.
+  override_local_dns: false
 
 # 0 disables node expiry: unattended servers never silently drop off the
 # tailnet. Trade-off: expire lost devices manually (`headscale node expire`).
