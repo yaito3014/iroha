@@ -1,4 +1,4 @@
-# headscale-dex-vps
+# iroha
 
 Self-hosted Tailscale-compatible VPN coordination (**Headscale**) with a
 self-hosted identity provider (**Dex**) and automatic TLS (**Caddy**), on a
