@@ -1,0 +1,45 @@
+# VPS stack: Headscale (coordination) + Dex (IdP) + Caddy (TLS edge).
+# Run ./setup.sh (after copying .env.example to .env) to render configs.
+#
+# Boot order matters: headscale fetches Dex's OIDC discovery at startup,
+# and Dex needs Caddy for its public HTTPS issuer — but discovery is
+# retried, so plain depends_on ordering is sufficient in practice.
+
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"      # ACME HTTP-01 + redirect
+      - "443:443"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro   # rendered by setup.sh
+      - caddy-data:/data        # certificates live here — do not delete
+      - caddy-config:/config
+
+  dex:
+    image: ghcr.io/dexidp/dex:v2.41.1   # pin; check for the current release
+    command: ["dex", "serve", "/etc/dex/config.yaml"]
+    restart: unless-stopped
+    volumes:
+      - ./dex/config.yaml:/etc/dex/config.yaml:ro
+      - dex-data:/var/dex               # sqlite: refresh tokens etc.
+    # If dex exits with a permission error on /var/dex, initialize the
+    # volume once:  docker compose run --rm --user 0 --entrypoint chown dex 1001:1001 /var/dex
+
+  headscale:
+    image: headscale/headscale:0.26     # pin to a release; see README
+    command: ["serve"]
+    restart: unless-stopped
+    depends_on:
+      - dex
+      - caddy
+    volumes:
+      - ./headscale/config.yaml:/etc/headscale/config.yaml:ro
+      - headscale-data:/var/lib/headscale
+
+volumes:
+  caddy-data:
+  caddy-config:
+  dex-data:
+  headscale-data:

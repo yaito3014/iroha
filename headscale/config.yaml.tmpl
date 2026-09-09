@@ -1,0 +1,45 @@
+# Rendered by setup.sh — edit the .tmpl, not the output.
+#
+# NOTE: Headscale's config schema changes between releases. Merge these
+# values into the config-example.yaml of the release tag pinned in
+# docker-compose.yml before first boot:
+#   https://github.com/juanfont/headscale/blob/<tag>/config-example.yaml
+
+server_url: https://{{HS_HOST}}
+listen_addr: 0.0.0.0:8080
+
+private_key_path: /var/lib/headscale/private.key
+noise:
+  private_key_path: /var/lib/headscale/noise_private.key
+
+prefixes:
+  v4: 100.64.0.0/10
+  v6: fd7a:115c:a1e0::/48
+
+database:
+  type: sqlite
+  sqlite:
+    path: /var/lib/headscale/db.sqlite
+
+derp:
+  urls:
+    - https://controlplane.tailscale.com/derpmap/default
+
+dns:
+  magic_dns: true
+  base_domain: {{TS_BASE_DOMAIN}}
+
+# 0 disables node expiry: unattended servers never silently drop off the
+# tailnet. Trade-off: expire lost devices manually (`headscale node expire`).
+node:
+  expiry: 0
+
+oidc:
+  issuer: https://{{DEX_HOST}}/dex
+  client_id: headscale
+  client_secret: "{{HEADSCALE_OIDC_SECRET}}"
+  pkce:
+    enabled: true
+  scope: ["openid", "profile", "email"]
+  allowed_users:
+    - {{ADMIN_EMAIL}}
