@@ -16,16 +16,16 @@ database, one login screen, one place to revoke access.
 [phone]  ──┘
      │ join / key exchange only
      ▼
-[VPS]  Caddy ── hs.your.domain  → Headscale ──┐  OIDC
-             └─ dex.your.domain → Dex      ←──┘
-                                   ↑
+[VPS]  Caddy ── headscale.your.domain → Headscale ──┐  OIDC
+             └─ dex.your.domain       → Dex      ←──┘
+                                         ↑
                     your in-tailnet apps verify JWTs against the same issuer
 ```
 
 ## Requirements
 
 - A VPS with a public IP, ports 80/443 open, Docker + Compose
-- A domain with two A records (`hs.`, `dex.`) pointing at the VPS,
+- A domain with two A records (`headscale.`, `dex.`) pointing at the VPS,
   **not** proxied through a CDN (Headscale's long-lived connections and
   ACME both want a direct path)
 - `openssl` and `python3` on the VPS (for `setup.sh`)
@@ -43,7 +43,7 @@ docker compose up -d
 Join a device (official Tailscale clients):
 
 ```sh
-tailscale up --login-server https://hs.your.domain
+tailscale up --login-server https://headscale.your.domain
 ```
 
 A browser opens Dex; only identities in `oidc.allowed_users` may join.
