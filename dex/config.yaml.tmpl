@@ -21,7 +21,7 @@ staticClients:
     name: Headscale
     secret: "{{HEADSCALE_OIDC_SECRET}}"
     redirectURIs:
-      - https://{{HS_HOST}}/oidc/callback
+      - https://{{HEADSCALE_HOST}}/oidc/callback
 {{APP_CLIENT_BLOCK}}
 # Demo user store. Replace with a real connector (GitHub, LDAP, SAML, ...)
 # for actual use; connectors also unlock the `groups` claim.

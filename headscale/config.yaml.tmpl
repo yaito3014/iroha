@@ -5,7 +5,7 @@
 # docker-compose.yml before first boot:
 #   https://github.com/juanfont/headscale/blob/<tag>/config-example.yaml
 
-server_url: https://{{HS_HOST}}
+server_url: https://{{HEADSCALE_HOST}}
 listen_addr: 0.0.0.0:8080
 
 private_key_path: /var/lib/headscale/private.key
@@ -27,7 +27,7 @@ derp:
 
 dns:
   magic_dns: true
-  base_domain: {{TS_BASE_DOMAIN}}
+  base_domain: {{TAILNET_BASE_DOMAIN}}
 
 # 0 disables node expiry: unattended servers never silently drop off the
 # tailnet. Trade-off: expire lost devices manually (`headscale node expire`).

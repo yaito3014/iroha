@@ -15,14 +15,14 @@ while IFS= read -r line || [ -n "$line" ]; do
     export "$key=$val"
 done < .env
 
-for v in HS_HOST DEX_HOST TS_BASE_DOMAIN ADMIN_EMAIL ADMIN_PASSWORD_HASH; do
+for v in HEADSCALE_HOST DEX_HOST TAILNET_BASE_DOMAIN ADMIN_EMAIL ADMIN_PASSWORD_HASH; do
     eval "val=\${$v:-}"
     [ -n "$val" ] || { echo "error: $v is not set in .env" >&2; exit 1; }
 done
 
-case "$TS_BASE_DOMAIN" in
-    "$HS_HOST"|"$DEX_HOST")
-        echo "error: TS_BASE_DOMAIN must differ from HS_HOST/DEX_HOST" >&2; exit 1 ;;
+case "$TAILNET_BASE_DOMAIN" in
+    "$HEADSCALE_HOST"|"$DEX_HOST")
+        echo "error: TAILNET_BASE_DOMAIN must differ from HEADSCALE_HOST/DEX_HOST" >&2; exit 1 ;;
 esac
 
 # Generate the Headscale<->Dex OIDC secret once and persist it in .env.
@@ -49,7 +49,7 @@ render() {
 import os, sys
 tmpl, out = sys.argv[1], sys.argv[2]
 text = open(tmpl).read()
-keys = ["HS_HOST", "DEX_HOST", "TS_BASE_DOMAIN", "ADMIN_EMAIL",
+keys = ["HEADSCALE_HOST", "DEX_HOST", "TAILNET_BASE_DOMAIN", "ADMIN_EMAIL",
         "ADMIN_PASSWORD_HASH", "HEADSCALE_OIDC_SECRET", "APP_CLIENT_BLOCK"]
 for k in keys:
     text = text.replace("{{%s}}" % k, os.environ.get(k, ""))
@@ -60,7 +60,7 @@ print(f"rendered {out}")
 PYEOF
 }
 
-export HS_HOST DEX_HOST TS_BASE_DOMAIN ADMIN_EMAIL ADMIN_PASSWORD_HASH \
+export HEADSCALE_HOST DEX_HOST TAILNET_BASE_DOMAIN ADMIN_EMAIL ADMIN_PASSWORD_HASH \
        HEADSCALE_OIDC_SECRET APP_CLIENT_BLOCK
 
 render caddy/Caddyfile.tmpl        caddy/Caddyfile
