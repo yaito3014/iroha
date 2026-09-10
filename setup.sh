@@ -1,35 +1,32 @@
 #!/bin/sh
-# Render caddy/dex/headscale configs from *.tmpl using values in .env.
+# Render caddy/headscale configs from *.tmpl using values in .env.
 # Idempotent: safe to re-run after editing .env or the templates.
 set -eu
 cd "$(dirname "$0")"
 
 [ -f .env ] || { echo "error: copy .env.example to .env and edit it first" >&2; exit 1; }
 
-# Read .env literally, line by line. Do NOT source it: values like bcrypt
-# hashes contain `$` and would be mangled by shell expansion.
+# Read .env literally, line by line, so a value is taken verbatim regardless of
+# any shell metacharacters it may contain. Do NOT source it.
 while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in ''|'#'*) continue ;; esac
     key=${line%%=*}
     val=${line#*=}
-    # Strip one layer of surrounding single quotes. Values containing `$`
-    # (bcrypt hashes) are single-quoted in .env so `docker compose` won't try
-    # to interpolate them; setup.sh must still see the raw value.
+    # Strip one layer of surrounding single quotes, so a value single-quoted in
+    # .env (to stop docker compose interpolating a `$`) is still seen raw here.
     case $val in
         \'*\') val=${val#\'}; val=${val%\'} ;;
     esac
     export "$key=$val"
 done < .env
 
-for v in HEADSCALE_HOST DEX_HOST ID_HOST TAILNET_BASE_DOMAIN LORE_HOST LORE_WEB_HOST \
-         ADMIN_EMAIL ADMIN_PASSWORD_HASH HEADSCALE_OIDC_SECRET \
-         GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET; do
+for v in HEADSCALE_HOST ID_HOST TAILNET_BASE_DOMAIN ADMIN_EMAIL HEADSCALE_OIDC_SECRET; do
     eval "val=\${$v:-}"
     [ -n "$val" ] || { echo "error: $v is not set in .env" >&2; exit 1; }
 done
 
 case "$TAILNET_BASE_DOMAIN" in
-    "$HEADSCALE_HOST"|"$DEX_HOST"|"$LORE_HOST"|"$LORE_WEB_HOST")
+    "$HEADSCALE_HOST")
         echo "error: TAILNET_BASE_DOMAIN must differ from the service hostnames" >&2; exit 1 ;;
 esac
 
@@ -39,9 +36,8 @@ render() {
 import os, sys
 tmpl, out = sys.argv[1], sys.argv[2]
 text = open(tmpl).read()
-keys = ["HEADSCALE_HOST", "DEX_HOST", "ID_HOST", "TAILNET_BASE_DOMAIN", "LORE_HOST",
-        "LORE_WEB_HOST", "ADMIN_EMAIL", "ADMIN_PASSWORD_HASH", "HEADSCALE_OIDC_SECRET",
-        "GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET"]
+keys = ["HEADSCALE_HOST", "ID_HOST", "TAILNET_BASE_DOMAIN", "ADMIN_EMAIL",
+        "HEADSCALE_OIDC_SECRET"]
 for k in keys:
     text = text.replace("{{%s}}" % k, os.environ.get(k, ""))
 if "{{" in text:
@@ -51,12 +47,9 @@ print(f"rendered {out}")
 PYEOF
 }
 
-export HEADSCALE_HOST DEX_HOST ID_HOST TAILNET_BASE_DOMAIN LORE_HOST LORE_WEB_HOST \
-       ADMIN_EMAIL ADMIN_PASSWORD_HASH HEADSCALE_OIDC_SECRET \
-       GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET
+export HEADSCALE_HOST ID_HOST TAILNET_BASE_DOMAIN ADMIN_EMAIL HEADSCALE_OIDC_SECRET
 
 render caddy/Caddyfile.tmpl        caddy/Caddyfile
-render dex/config.yaml.tmpl        dex/config.yaml
 render headscale/config.yaml.tmpl  headscale/config.yaml
 
 echo "done. next: review headscale/config.yaml against your release's" \

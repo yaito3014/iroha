@@ -1,5 +1,4 @@
 .env
 # rendered from *.tmpl by setup.sh — never commit (contains secrets)
 caddy/Caddyfile
-dex/config.yaml
 headscale/config.yaml
