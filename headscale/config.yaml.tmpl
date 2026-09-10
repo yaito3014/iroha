@@ -34,7 +34,10 @@ dns:
   override_local_dns: false
 
 oidc:
-  issuer: https://{{DEX_HOST}}/dex
+  # Authentik per-application issuer. The trailing slash is required: it must
+  # match the `issuer` value in Authentik's discovery document exactly, or the
+  # OIDC client rejects the provider.
+  issuer: https://{{ID_HOST}}/application/o/headscale/
   client_id: headscale
   client_secret: "{{HEADSCALE_OIDC_SECRET}}"
   pkce:

@@ -21,8 +21,9 @@ while IFS= read -r line || [ -n "$line" ]; do
     export "$key=$val"
 done < .env
 
-for v in HEADSCALE_HOST DEX_HOST TAILNET_BASE_DOMAIN LORE_HOST LORE_WEB_HOST \
-         ADMIN_EMAIL ADMIN_PASSWORD_HASH GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET; do
+for v in HEADSCALE_HOST DEX_HOST ID_HOST TAILNET_BASE_DOMAIN LORE_HOST LORE_WEB_HOST \
+         ADMIN_EMAIL ADMIN_PASSWORD_HASH HEADSCALE_OIDC_SECRET \
+         GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET; do
     eval "val=\${$v:-}"
     [ -n "$val" ] || { echo "error: $v is not set in .env" >&2; exit 1; }
 done
@@ -32,24 +33,13 @@ case "$TAILNET_BASE_DOMAIN" in
         echo "error: TAILNET_BASE_DOMAIN must differ from the service hostnames" >&2; exit 1 ;;
 esac
 
-# Generate the Headscale<->Dex OIDC secret once and persist it in .env.
-if [ -z "${HEADSCALE_OIDC_SECRET:-}" ]; then
-    HEADSCALE_OIDC_SECRET=$(openssl rand -hex 32)
-    if grep -q '^HEADSCALE_OIDC_SECRET=' .env; then
-        sed -i.bak "s/^HEADSCALE_OIDC_SECRET=.*/HEADSCALE_OIDC_SECRET=${HEADSCALE_OIDC_SECRET}/" .env && rm -f .env.bak
-    else
-        printf 'HEADSCALE_OIDC_SECRET=%s\n' "$HEADSCALE_OIDC_SECRET" >> .env
-    fi
-    echo "generated HEADSCALE_OIDC_SECRET (stored in .env)"
-fi
-
 render() {
     # $1: template path, $2: output path
     python3 - "$1" "$2" <<'PYEOF'
 import os, sys
 tmpl, out = sys.argv[1], sys.argv[2]
 text = open(tmpl).read()
-keys = ["HEADSCALE_HOST", "DEX_HOST", "TAILNET_BASE_DOMAIN", "LORE_HOST",
+keys = ["HEADSCALE_HOST", "DEX_HOST", "ID_HOST", "TAILNET_BASE_DOMAIN", "LORE_HOST",
         "LORE_WEB_HOST", "ADMIN_EMAIL", "ADMIN_PASSWORD_HASH", "HEADSCALE_OIDC_SECRET",
         "GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET"]
 for k in keys:
@@ -61,7 +51,7 @@ print(f"rendered {out}")
 PYEOF
 }
 
-export HEADSCALE_HOST DEX_HOST TAILNET_BASE_DOMAIN LORE_HOST LORE_WEB_HOST \
+export HEADSCALE_HOST DEX_HOST ID_HOST TAILNET_BASE_DOMAIN LORE_HOST LORE_WEB_HOST \
        ADMIN_EMAIL ADMIN_PASSWORD_HASH HEADSCALE_OIDC_SECRET \
        GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET
 
