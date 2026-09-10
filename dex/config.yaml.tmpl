@@ -27,6 +27,14 @@ staticClients:
   - id: {{LORE_HOST}}
     name: {{LORE_HOST}}
     public: true
+  # Lore web frontend (kaguya-web). Public client using the auth-code flow with
+  # PKCE (no secret to sync across hosts); unlike the device-flow client it has a
+  # redirect URI. The id is the frontend hostname and the token audience.
+  - id: {{LORE_WEB_HOST}}
+    name: {{LORE_WEB_HOST}}
+    public: true
+    redirectURIs:
+      - https://{{LORE_WEB_HOST}}/auth/callback
 # Demo user store. Replace with a real connector (GitHub, LDAP, SAML, ...)
 # for actual use; connectors also unlock the `groups` claim.
 enablePasswordDB: true
