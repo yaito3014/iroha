@@ -21,7 +21,8 @@ while IFS= read -r line || [ -n "$line" ]; do
     export "$key=$val"
 done < .env
 
-for v in HEADSCALE_HOST DEX_HOST TAILNET_BASE_DOMAIN LORE_HOST LORE_WEB_HOST ADMIN_EMAIL ADMIN_PASSWORD_HASH; do
+for v in HEADSCALE_HOST DEX_HOST TAILNET_BASE_DOMAIN LORE_HOST LORE_WEB_HOST \
+         ADMIN_EMAIL ADMIN_PASSWORD_HASH GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET; do
     eval "val=\${$v:-}"
     [ -n "$val" ] || { echo "error: $v is not set in .env" >&2; exit 1; }
 done
@@ -49,7 +50,8 @@ import os, sys
 tmpl, out = sys.argv[1], sys.argv[2]
 text = open(tmpl).read()
 keys = ["HEADSCALE_HOST", "DEX_HOST", "TAILNET_BASE_DOMAIN", "LORE_HOST",
-        "LORE_WEB_HOST", "ADMIN_EMAIL", "ADMIN_PASSWORD_HASH", "HEADSCALE_OIDC_SECRET"]
+        "LORE_WEB_HOST", "ADMIN_EMAIL", "ADMIN_PASSWORD_HASH", "HEADSCALE_OIDC_SECRET",
+        "GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET"]
 for k in keys:
     text = text.replace("{{%s}}" % k, os.environ.get(k, ""))
 if "{{" in text:
@@ -60,7 +62,8 @@ PYEOF
 }
 
 export HEADSCALE_HOST DEX_HOST TAILNET_BASE_DOMAIN LORE_HOST LORE_WEB_HOST \
-       ADMIN_EMAIL ADMIN_PASSWORD_HASH HEADSCALE_OIDC_SECRET
+       ADMIN_EMAIL ADMIN_PASSWORD_HASH HEADSCALE_OIDC_SECRET \
+       GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET
 
 render caddy/Caddyfile.tmpl        caddy/Caddyfile
 render dex/config.yaml.tmpl        dex/config.yaml
