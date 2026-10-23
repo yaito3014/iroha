@@ -4,7 +4,7 @@
 
 services:
   caddy:
-    image: caddy:2
+    image: caddy:2@sha256:504a44d7d74bd2bc28a66afc4774912fc21223ca8a67734af1c54ab2f999b489
     restart: unless-stopped
     ports:
       - "80:80"      # ACME HTTP-01 + redirect
@@ -15,7 +15,7 @@ services:
       - caddy-config:/config
 
   headscale:
-    image: headscale/headscale:0.26     # pin to a release; see README
+    image: headscale/headscale:0.26@sha256:ea9b5ee06274d757a4d52103de56cd11a9c393acb19d9a35f4b9fe52ada410de     # pin to a release; see README
     command: ["serve"]
     restart: unless-stopped
     depends_on:
