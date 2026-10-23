@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Live Panel</title>
+<style>
+  :root { --bg:#0f1115; --card:#171a21; --line:#262b36; --fg:#e6e8ee; --muted:#8b93a5; --ok:#3ddc84; --warn:#f5a524; --bad:#ff5c5c; --accent:#5b9dff; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  header { display:flex; align-items:center; gap:12px; padding:14px 16px; border-bottom:1px solid var(--line); }
+  header h1 { font-size:17px; margin:0; font-weight:600; }
+  header .st { margin-left:auto; color:var(--muted); font-size:13px; }
+  main { max-width:1100px; margin:0 auto; padding:16px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(320px,1fr)); gap:14px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; }
+  .card h2 { margin:0 0 6px; font-size:16px; display:flex; align-items:center; gap:8px; }
+  .dot { width:9px; height:9px; border-radius:50%; background:var(--muted); display:inline-block; }
+  .dot.ok { background:var(--ok); } .dot.warn { background:var(--warn); }
+  .meta { color:var(--muted); font-size:13px; margin-bottom:10px; }
+  .urls div { display:flex; gap:6px; align-items:center; margin:4px 0; }
+  .urls code { flex:1; background:#0b0d11; border:1px solid var(--line); border-radius:6px; padding:5px 8px; font-size:12.5px; overflow:auto; white-space:nowrap; }
+  button { background:#232835; color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:5px 10px; font-size:12.5px; cursor:pointer; }
+  button:hover { border-color:var(--accent); }
+  button.danger { color:var(--bad); }
+  table { width:100%; border-collapse:collapse; font-size:13px; margin-top:8px; }
+  th, td { text-align:left; padding:5px 6px; border-top:1px solid var(--line); }
+  th { color:var(--muted); font-weight:500; border-top:none; }
+  .empty { color:var(--muted); padding:30px; text-align:center; border:1px dashed var(--line); border-radius:10px; }
+  .err { color:var(--bad); }
+  section { margin-top:22px; }
+  section h3 { font-size:14px; color:var(--muted); margin:0 0 8px; font-weight:500; text-transform:uppercase; letter-spacing:.04em; }
+</style>
+</head>
+<body>
+<header>
+  <h1 class="host"></h1>
+  <span class="st" id="status">connecting…</span>
+</header>
+<main>
+  <div id="streams" class="grid"></div>
+  <section>
+    <h3>Viewers</h3>
+    <div id="readers"></div>
+  </section>
+  <section>
+    <h3>Publish from OBS</h3>
+    <div class="card">
+      <div class="meta">Service: Custom · Server: <code>rtmp://<span class="host"></span>:1935/</code> · Stream key: <code>&lt;name&gt;?user=&lt;user&gt;&amp;pass=&lt;secret&gt;</code></div>
+      <div class="meta">The name you choose becomes the path. Viewers then use the URLs shown on the stream card.</div>
+    </div>
+  </section>
+</main>
+<script>
+// Hostname comes from the page URL, so the panel carries no deployment config.
+document.querySelectorAll('.host').forEach(e => { e.textContent = location.hostname; });
+const HOST = location.host;
+const $ = (id) => document.getElementById(id);
+const api = async (p, opt) => {
+  const r = await fetch('/api' + p, Object.assign({ cache: 'no-store' }, opt || {}));
+  if (!r.ok) throw new Error(r.status + ' ' + p);
+  return opt && opt.method === 'POST' ? r : r.json();
+};
+const fmtBytes = (b) => b > 1e9 ? (b/1e9).toFixed(2)+' GB' : b > 1e6 ? (b/1e6).toFixed(1)+' MB' : b > 1e3 ? (b/1e3).toFixed(0)+' kB' : b+' B';
+const since = (iso) => { if (!iso) return '–'; const s = Math.max(0, (Date.now() - new Date(iso)) / 1000); const h = Math.floor(s/3600), m = Math.floor(s%3600/60), x = Math.floor(s%60); return (h ? h+'h ' : '') + (m ? m+'m ' : '') + x + 's'; };
+const esc = (s) => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const userOf = (q) => { const m = /(?:^|&)user=([^&]*)/.exec(q || ''); return m ? decodeURIComponent(m[1]) : '?'; };
+const ipOf = (a) => (a || '').replace(/:\d+$/, '').replace(/^\[|\]$/g, '');
+const copy = (t) => navigator.clipboard && navigator.clipboard.writeText(t);
+window.copyText = copy;
+
+// bitrate estimate from successive samples
+const last = {};
+const rate = (key, bytes) => { const now = Date.now(); const p = last[key]; last[key] = { bytes, now }; if (!p || now === p.now) return null; return (bytes - p.bytes) * 8 / ((now - p.now) / 1000); };
+const fmtRate = (r) => r == null ? '' : (r/1e6).toFixed(2) + ' Mbps';
+
+async function kick(kind, id) {
+  if (!confirm('Disconnect this ' + (kind === 'rtmpconns' ? 'publisher' : 'viewer') + '?')) return;
+  try { await api('/v3/' + kind + '/kick/' + id, { method: 'POST' }); refresh(); } catch (e) { alert(e.message); }
+}
+window.kick = kick;
+
+async function refresh() {
+  try {
+    const [paths, rtmp, rtsp, webrtc] = await Promise.all([
+      api('/v3/paths/list'), api('/v3/rtmpconns/list'), api('/v3/rtspsessions/list'), api('/v3/webrtcsessions/list')
+    ]);
+    const pubs = {};
+    rtmp.items.filter(c => c.state === 'publish').forEach(c => pubs[c.path] = { kind: 'rtmpconns', c });
+    rtsp.items.filter(c => c.state === 'publish').forEach(c => pubs[c.path] = { kind: 'rtspsessions', c });
+    webrtc.items.filter(c => c.state === 'publish').forEach(c => pubs[c.path] = { kind: 'webrtcsessions', c });
+
+    const live = paths.items.filter(p => p.ready);
+    $('streams').innerHTML = live.length ? live.map(p => {
+      const pub = pubs[p.name];
+      const r = rate('path:' + p.name, p.bytesReceived);
+      const nReaders = p.readers.length;
+      return `<div class="card">
+        <h2><span class="dot ok"></span>${esc(p.name)}</h2>
+        <div class="meta">
+          publisher <b>${esc(pub ? userOf(pub.c.query) : (p.source ? p.source.type : '?'))}</b>
+          ${pub ? ' from ' + esc(ipOf(pub.c.remoteAddr)) : ''} · up ${since(p.readyTime)}
+          · ${esc(p.tracks.join(' + '))} · ${fmtRate(r)} · ${fmtBytes(p.bytesReceived)} in
+          · <b>${nReaders}</b> viewer${nReaders === 1 ? '' : 's'}
+        </div>
+        <div class="urls">
+          <div><code>rtspt://${HOST}/${esc(p.name)}</code><button onclick="copyText('rtspt://${HOST}/${esc(p.name)}')">copy</button><span class="meta">VRChat</span></div>
+          <div><code>rtsp://${HOST}/${esc(p.name)}</code><button onclick="copyText('rtsp://${HOST}/${esc(p.name)}')">copy</button><span class="meta">VLC</span></div>
+          <div><code>https://${HOST}/${esc(p.name)}/</code><button onclick="copyText('https://${HOST}/${esc(p.name)}/')">copy</button><a class="meta" href="/${esc(p.name)}/" target="_blank">open</a></div>
+        </div>
+        ${pub ? `<div style="margin-top:10px"><button class="danger" onclick="kick('${pub.kind}','${pub.c.id}')">disconnect publisher</button></div>` : ''}
+      </div>`;
+    }).join('') : '<div class="empty">No stream is being published right now.</div>';
+
+    const readers = [
+      ...rtsp.items.filter(c => c.state === 'read').map(c => ({ kind: 'rtspsessions', proto: 'RTSP ' + (c.transport || ''), c })),
+      ...webrtc.items.filter(c => c.state === 'read').map(c => ({ kind: 'webrtcsessions', proto: 'WebRTC', c })),
+      ...rtmp.items.filter(c => c.state === 'read').map(c => ({ kind: 'rtmpconns', proto: 'RTMP', c })),
+    ];
+    $('readers').innerHTML = readers.length ? `<div class="card"><table>
+      <tr><th>stream</th><th>protocol</th><th>from</th><th>connected</th><th>sent</th><th></th></tr>
+      ${readers.map(x => `<tr><td>${esc(x.c.path)}</td><td>${esc(x.proto)}</td><td>${esc(ipOf(x.c.remoteAddr))}</td><td>${since(x.c.created)}</td><td>${fmtBytes(x.c.bytesSent)}</td>
+        <td><button class="danger" onclick="kick('${x.kind}','${x.c.id}')">kick</button></td></tr>`).join('')}
+    </table></div>` : '<div class="empty">No viewers connected.</div>';
+
+    $('status').textContent = 'updated ' + new Date().toLocaleTimeString();
+    $('status').className = 'st';
+  } catch (e) {
+    $('status').textContent = 'error: ' + e.message;
+    $('status').className = 'st err';
+  }
+}
+refresh();
+setInterval(refresh, 3000);
+</script>
+</body>
+</html>

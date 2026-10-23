@@ -1,7 +1,9 @@
 .env
 # rendered from *.tmpl by setup.sh — never commit (contains secrets)
 caddy/Caddyfile
+caddy/sites/
 headscale/config.yaml
+live/mediamtx.yml
 
 # ops/update.sh runtime state
 .update-failed

@@ -2,6 +2,12 @@
 # by an external Authentik IdP on a separate host; this stack only consumes it.
 # Run ./setup.sh (after copying .env.example to .env) to render configs.
 
+# Separate parts live in their own directories and are pulled in here so they
+# share this project's network, Caddy and update/backup tooling. Each one gates
+# its services behind a compose profile, switched in .env via COMPOSE_PROFILES.
+include:
+  - live/docker-compose.yml   # MediaMTX streaming; profile "live", on by default
+
 services:
   caddy:
     image: caddy:2@sha256:504a44d7d74bd2bc28a66afc4774912fc21223ca8a67734af1c54ab2f999b489
@@ -11,6 +17,7 @@ services:
       - "443:443"
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro   # rendered by setup.sh
+      - ./caddy/sites:/etc/caddy/sites:ro           # optional parts' sites, rendered by setup.sh
       - caddy-data:/data        # certificates live here — do not delete
       - caddy-config:/config
 

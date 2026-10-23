@@ -1,0 +1,60 @@
+# Rendered by setup.sh to live/mediamtx.yml — edit the .tmpl, not the output.
+# The publisher password comes from LIVE_PUBLISH_PASS in .env (never commit it).
+
+logLevel: info
+
+api: yes
+apiAddress: :9997
+metrics: no
+pprof: no
+playback: no
+
+rtsp: yes
+rtspAddress: :8554
+rtspTransports: [tcp]
+rtspEncryption: "no"
+rtmp: yes
+rtmpAddress: :1935
+rtmpEncryption: "no"
+hls: no
+srt: no
+moq: no
+
+webrtc: yes
+webrtcAddress: :8889
+webrtcEncryption: no            # TLS is terminated by Caddy
+webrtcAllowOrigins: ['*']
+webrtcTrustedProxies: ['172.16.0.0/12']
+webrtcLocalUDPAddress: :8189
+webrtcLocalTCPAddress: :8189
+webrtcIPsFromInterfaces: no
+webrtcAdditionalHosts: ['{{LIVE_PUBLIC_IP}}']
+webrtcICEServers2: []
+webrtcHandshakeTimeout: 10s
+webrtcTrackGatherTimeout: 2s
+webrtcSTUNGatherTimeout: 5s
+
+authMethod: internal
+authInternalUsers:
+  # Anyone may watch.
+  - user: any
+    pass:
+    ips: []
+    permissions:
+      - action: read
+  # API only from the host / docker network.
+  - user: any
+    pass:
+    ips: ['127.0.0.1', '::1', '172.16.0.0/12']
+    permissions:
+      - action: api
+  # Only OBS (with the secret) may publish; the stream key it uses becomes the path name.
+  - user: publisher
+    pass: "{{LIVE_PUBLISH_PASS}}"   # setup.sh allows only [A-Za-z0-9._~-]
+    ips: []
+    permissions:
+      - action: publish
+
+paths:
+  # Accept any path name; the OBS stream key chooses it (e.g. rtspt://{{LIVE_HOST}}/<key>).
+  all_others:
