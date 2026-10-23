@@ -105,8 +105,7 @@ are missing):
 
 ```sh
 COMPOSE_PROFILES=live           # the default; remove "live" to turn it off
-LIVE_HOST=live.example.com      # A record -> this VPS, DNS-only
-LIVE_PUBLIC_IP=203.0.113.10     # this VPS, advertised to WebRTC clients
+LIVE_HOST=live.example.com      # A record -> this VPS, DNS-only; also advertised to WebRTC clients
 LIVE_PUBLISH_PASS=<random>      # A-Z a-z 0-9 . _ ~ - only; e.g. openssl rand -hex 16
 ```
 
