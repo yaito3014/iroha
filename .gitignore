@@ -2,3 +2,7 @@
 # rendered from *.tmpl by setup.sh — never commit (contains secrets)
 caddy/Caddyfile
 headscale/config.yaml
+
+# ops/update.sh runtime state
+.update-failed
+.update.lock
