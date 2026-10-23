@@ -1,8 +1,8 @@
-# live: MediaMTX streaming server + its control panel, an optional part of the
+# live: MediaMTX streaming server + its control panel, a separate part of the
 # iroha stack. Included from ../docker-compose.yml, so it shares iroha's
 # project, network and Caddy, and ops/update.sh updates it with the rest. Every
-# service is in the "live" profile: it runs only when .env sets
-# COMPOSE_PROFILES=live (see README, "live").
+# service is in the "live" profile, which .env.example enables by default
+# (COMPOSE_PROFILES=live); drop it there to turn streaming off (see README).
 
 services:
   mediamtx:

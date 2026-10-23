@@ -25,17 +25,15 @@ for v in HEADSCALE_HOST ID_HOST TAILNET_BASE_DOMAIN ADMIN_EMAIL HEADSCALE_OIDC_S
     [ -n "$val" ] || { echo "error: $v is not set in .env" >&2; exit 1; }
 done
 
-# live/ is optional: enabled by setting LIVE_HOST (plus COMPOSE_PROFILES=live).
-if [ -n "${LIVE_HOST:-}" ]; then
-    for v in LIVE_PUBLIC_IP LIVE_PUBLISH_PASS; do
+# live/ is on when COMPOSE_PROFILES includes "live" (as .env.example ships);
+# the same switch starts its services in compose.
+live=0
+case ",${COMPOSE_PROFILES:-}," in *,live,*) live=1 ;; esac
+if [ "$live" = 1 ]; then
+    for v in LIVE_HOST LIVE_PUBLIC_IP LIVE_PUBLISH_PASS; do
         eval "val=\${$v:-}"
-        [ -n "$val" ] || { echo "error: LIVE_HOST is set, so $v must be too" >&2; exit 1; }
+        [ -n "$val" ] || { echo "error: $v is not set in .env (or drop live from COMPOSE_PROFILES)" >&2; exit 1; }
     done
-    case ",${COMPOSE_PROFILES:-}," in
-        *,live,*) ;;
-        *) echo "warning: LIVE_HOST is set but COMPOSE_PROFILES does not include live;" \
-                "the live services will not start" >&2 ;;
-    esac
 fi
 
 case "$TAILNET_BASE_DOMAIN" in
@@ -66,7 +64,7 @@ render caddy/Caddyfile.tmpl        caddy/Caddyfile
 render headscale/config.yaml.tmpl  headscale/config.yaml
 
 mkdir -p caddy/sites
-if [ -n "${LIVE_HOST:-}" ]; then
+if [ "$live" = 1 ]; then
     render live/Caddyfile.tmpl     caddy/sites/live.caddy
     render live/mediamtx.yml.tmpl  live/mediamtx.yml
     chmod 600 live/mediamtx.yml    # holds the publisher password

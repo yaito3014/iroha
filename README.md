@@ -26,12 +26,16 @@ governed by the same account system as the rest of the fleet.
 - `python3` on the VPS (for `setup.sh`)
 - A reachable Authentik instance with an OAuth2 provider + application for
   Headscale — see [Authentik provider](#authentik-provider)
+- For [live](#live-streaming) (on by default): a second A record (`live.`),
+  ports 1935/tcp, 554/tcp and 8189/tcp+udp open, and a forward-auth Proxy
+  provider in Authentik — or turn it off by removing `live` from
+  `COMPOSE_PROFILES`
 
 ## Quick start
 
 ```sh
 cp .env.example .env
-$EDITOR .env          # hostnames, admin email, Authentik client secret
+$EDITOR .env          # hostnames, admin email, Authentik client secret, live/ values
 ./setup.sh            # renders configs
 # merge headscale/config.yaml into your pinned release's config-example.yaml
 docker compose up -d
@@ -69,9 +73,9 @@ identifier changes, and existing users must have their `provider_identifier`
 column updated to the new `iss/sub` (`url.JoinPath(iss, sub)`), or logins fail
 with a name/email collision against the old row.
 
-## live (optional)
+## live (streaming)
 
-`live/` is a separate, optional part of this stack: a
+`live/` is a separate part of this stack, on by default: a
 [MediaMTX](https://github.com/bluenviron/mediamtx) streaming server (OBS
 publishes over RTMP; viewers watch over WebRTC or RTSP) plus a small control
 panel. It is kept apart from Headscale on purpose:
@@ -79,8 +83,10 @@ panel. It is kept apart from Headscale on purpose:
 - **Its own directory.** `live/` holds its compose file, MediaMTX config
   template, Caddy site template and panel. The root `docker-compose.yml` only
   `include`s it.
-- **Off by default.** Every live service is in the `live` compose profile, and
-  setup.sh renders its files only when `LIVE_HOST` is set.
+- **One switch.** Every live service is in the `live` compose profile.
+  `.env.example` turns it on (`COMPOSE_PROFILES=live`), and setup.sh renders
+  its files only while it is on. Remove `live` from `COMPOSE_PROFILES` to run
+  Headscale alone.
 - **Shared plumbing.** It joins this project's network and Caddy. setup.sh
   renders its site to `caddy/sites/live.caddy`, which the main Caddyfile
   imports. `ops/update.sh` pulls, backs up and health-checks it along with
@@ -94,16 +100,17 @@ Routing on `LIVE_HOST`:
 | `/api/*` | MediaMTX API | Authentik login (forward auth) |
 | anything else | MediaMTX (viewer pages, WHIP/WHEP) | MediaMTX users: anyone may read; publishing needs `LIVE_PUBLISH_PASS` |
 
-To enable it, set in `.env`:
+Set its values in `.env` (setup.sh refuses to run while live is on and they
+are missing):
 
 ```sh
-COMPOSE_PROFILES=live
+COMPOSE_PROFILES=live           # the default; remove "live" to turn it off
 LIVE_HOST=live.example.com      # A record -> this VPS, DNS-only
 LIVE_PUBLIC_IP=203.0.113.10     # this VPS, advertised to WebRTC clients
 LIVE_PUBLISH_PASS=<random>      # e.g. openssl rand -hex 16
 ```
 
-Then run `./setup.sh` and `docker compose up -d`. You also need:
+You also need:
 
 - **Ports:** open 1935/tcp (RTMP), 554/tcp (RTSP) and 8189/tcp+udp (WebRTC
   media).
