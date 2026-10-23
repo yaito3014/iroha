@@ -1,0 +1,26 @@
+# live: MediaMTX streaming server + its control panel, an optional part of the
+# iroha stack. Included from ../docker-compose.yml, so it shares iroha's
+# project, network and Caddy, and ops/update.sh updates it with the rest. Every
+# service is in the "live" profile: it runs only when .env sets
+# COMPOSE_PROFILES=live (see README, "live").
+
+services:
+  mediamtx:
+    image: bluenviron/mediamtx:1.21.2@sha256:c7540465f868a02652118bea5a0daab12a29ac0f6cb8485abd535939ecddf886
+    profiles: ["live"]
+    restart: unless-stopped
+    ports:
+      - "1935:1935"        # RTMP ingest from OBS
+      - "554:8554"         # RTSP output for VRChat (rtspt://<LIVE_HOST>/<key>)
+      - "8189:8189/udp"    # WebRTC media (ICE UDP)
+      - "8189:8189/tcp"    # WebRTC media fallback (ICE TCP)
+      - "127.0.0.1:9997:9997"  # control API, local only (Caddy reaches it as mediamtx:9997)
+    volumes:
+      - ./mediamtx.yml:/mediamtx.yml:ro   # rendered by setup.sh
+
+  panel:
+    image: nginx:alpine@sha256:df221db836e1754089190208cee7eeda94f233197056426eda74a43ab1abeac2
+    profiles: ["live"]
+    restart: unless-stopped
+    volumes:
+      - ./panel:/usr/share/nginx/html:ro

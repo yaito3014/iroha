@@ -69,6 +69,54 @@ identifier changes, and existing users must have their `provider_identifier`
 column updated to the new `iss/sub` (`url.JoinPath(iss, sub)`), or logins fail
 with a name/email collision against the old row.
 
+## live (optional)
+
+`live/` is a separate, optional part of this stack: a
+[MediaMTX](https://github.com/bluenviron/mediamtx) streaming server (OBS
+publishes over RTMP; viewers watch over WebRTC or RTSP) plus a small control
+panel. It is kept apart from Headscale on purpose:
+
+- **Its own directory.** `live/` holds its compose file, MediaMTX config
+  template, Caddy site template and panel. The root `docker-compose.yml` only
+  `include`s it.
+- **Off by default.** Every live service is in the `live` compose profile, and
+  setup.sh renders its files only when `LIVE_HOST` is set.
+- **Shared plumbing.** It joins this project's network and Caddy. setup.sh
+  renders its site to `caddy/sites/live.caddy`, which the main Caddyfile
+  imports. `ops/update.sh` pulls, backs up and health-checks it along with
+  Headscale.
+
+Routing on `LIVE_HOST`:
+
+| Path | Goes to | Access |
+| --- | --- | --- |
+| `/` | panel | Authentik login (forward auth) |
+| `/api/*` | MediaMTX API | Authentik login (forward auth) |
+| anything else | MediaMTX (viewer pages, WHIP/WHEP) | MediaMTX users: anyone may read; publishing needs `LIVE_PUBLISH_PASS` |
+
+To enable it, set in `.env`:
+
+```sh
+COMPOSE_PROFILES=live
+LIVE_HOST=live.example.com      # A record -> this VPS, DNS-only
+LIVE_PUBLIC_IP=203.0.113.10     # this VPS, advertised to WebRTC clients
+LIVE_PUBLISH_PASS=<random>      # e.g. openssl rand -hex 16
+```
+
+Then run `./setup.sh` and `docker compose up -d`. You also need:
+
+- **Ports:** open 1935/tcp (RTMP), 554/tcp (RTSP) and 8189/tcp+udp (WebRTC
+  media).
+- **In Authentik:** a Proxy provider in forward-auth mode for `LIVE_HOST`, with
+  its application bound to the embedded outpost.
+- **On the Authentik host:** its Caddy must trust this VPS's
+  `X-Forwarded-*` headers (`trusted_proxies`), or the outpost cannot match the
+  application.
+
+In OBS, use the server `rtmp://<LIVE_HOST>:1935/` and the stream key
+`<name>?user=publisher&pass=<LIVE_PUBLISH_PASS>`. `<name>` becomes the stream
+path.
+
 ## Automated updates
 
 Updates are pull-based: nothing outside this VPS can push to it.

@@ -1,0 +1,35 @@
+# Rendered by setup.sh to caddy/sites/live.caddy (only when LIVE_HOST is set),
+# which the main Caddyfile imports — edit the .tmpl, not the output.
+{{LIVE_HOST}} {
+    # Control panel + MediaMTX API: login via Authentik ({{ID_HOST}}) using
+    # forward auth against its embedded outpost.
+    handle /outpost.goauthentik.io/* {
+        reverse_proxy https://{{ID_HOST}} {
+            header_up Host {upstream_hostport}
+        }
+    }
+    handle /api/* {
+        forward_auth https://{{ID_HOST}} {
+            uri /outpost.goauthentik.io/auth/caddy
+            copy_headers X-Authentik-Username X-Authentik-Email
+            trusted_proxies private_ranges
+            header_up Host {upstream_hostport}
+        }
+        uri strip_prefix /api
+        reverse_proxy mediamtx:9997
+    }
+    handle / {
+        forward_auth https://{{ID_HOST}} {
+            uri /outpost.goauthentik.io/auth/caddy
+            copy_headers X-Authentik-Username X-Authentik-Email
+            trusted_proxies private_ranges
+            header_up Host {upstream_hostport}
+        }
+        reverse_proxy panel:80
+    }
+    # Everything else (viewer pages, WHIP/WHEP) goes to MediaMTX, unauthenticated:
+    # MediaMTX's own users decide who may read and publish.
+    handle {
+        reverse_proxy mediamtx:8889
+    }
+}

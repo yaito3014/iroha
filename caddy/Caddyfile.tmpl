@@ -2,3 +2,7 @@
 {{HEADSCALE_HOST}} {
     reverse_proxy headscale:8080
 }
+
+# Sites of optional parts (e.g. live/), rendered into caddy/sites/ by setup.sh
+# only when enabled. An empty directory imports nothing.
+import sites/*.caddy
