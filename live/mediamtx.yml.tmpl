@@ -28,7 +28,9 @@ webrtcTrustedProxies: ['172.16.0.0/12']
 webrtcLocalUDPAddress: :8189
 webrtcLocalTCPAddress: :8189
 webrtcIPsFromInterfaces: no
-webrtcAdditionalHosts: ['{{LIVE_PUBLIC_IP}}']
+# Inside Docker MediaMTX only sees its container IP, so advertise the public
+# host instead; MediaMTX resolves it for each new WebRTC session.
+webrtcAdditionalHosts: ['{{LIVE_HOST}}']
 webrtcICEServers2: []
 webrtcHandshakeTimeout: 10s
 webrtcTrackGatherTimeout: 2s
