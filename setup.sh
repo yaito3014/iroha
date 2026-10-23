@@ -34,6 +34,13 @@ if [ "$live" = 1 ]; then
         eval "val=\${$v:-}"
         [ -n "$val" ] || { echo "error: $v is not set in .env (or drop live from COMPOSE_PROFILES)" >&2; exit 1; }
     done
+    # The password lands in YAML (mediamtx.yml) and in the OBS stream-key URL
+    # (?pass=...), so allow only characters that are literal in both.
+    case "$LIVE_PUBLISH_PASS" in
+        *[!A-Za-z0-9._~-]*)
+            echo "error: LIVE_PUBLISH_PASS may contain only A-Z a-z 0-9 . _ ~ - (try: openssl rand -hex 16)" >&2
+            exit 1 ;;
+    esac
 fi
 
 case "$TAILNET_BASE_DOMAIN" in

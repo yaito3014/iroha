@@ -85,8 +85,8 @@ panel. It is kept apart from Headscale on purpose:
   `include`s it.
 - **One switch.** Every live service is in the `live` compose profile.
   `.env.example` turns it on (`COMPOSE_PROFILES=live`), and setup.sh renders
-  its files only while it is on. Remove `live` from `COMPOSE_PROFILES` to run
-  Headscale alone.
+  its files only while it is on. To run Headscale alone, follow
+  [Turning live on or off](#turning-live-on-or-off).
 - **Shared plumbing.** It joins this project's network and Caddy. setup.sh
   renders its site to `caddy/sites/live.caddy`, which the main Caddyfile
   imports. `ops/update.sh` pulls, backs up and health-checks it along with
@@ -107,7 +107,7 @@ are missing):
 COMPOSE_PROFILES=live           # the default; remove "live" to turn it off
 LIVE_HOST=live.example.com      # A record -> this VPS, DNS-only
 LIVE_PUBLIC_IP=203.0.113.10     # this VPS, advertised to WebRTC clients
-LIVE_PUBLISH_PASS=<random>      # e.g. openssl rand -hex 16
+LIVE_PUBLISH_PASS=<random>      # A-Z a-z 0-9 . _ ~ - only; e.g. openssl rand -hex 16
 ```
 
 You also need:
@@ -123,6 +123,38 @@ You also need:
 In OBS, use the server `rtmp://<LIVE_HOST>:1935/` and the stream key
 `<name>?user=publisher&pass=<LIVE_PUBLISH_PASS>`. `<name>` becomes the stream
 path.
+
+### Turning live on or off
+
+On a running host, changing `COMPOSE_PROFILES` isn't enough. Caddy only reads
+its config when it starts or reloads, and Compose ignores the containers of a
+profile that's turned off, so they would keep running.
+
+To turn it on, add `live` to `COMPOSE_PROFILES` and set the `LIVE_*` values,
+then:
+
+```sh
+./setup.sh
+docker compose up -d
+docker compose exec -w /etc/caddy caddy caddy reload
+```
+
+To turn it off, remove the containers first, while the profile is still known:
+
+```sh
+docker compose --profile live rm -sf mediamtx panel
+```
+
+Then remove `live` from `COMPOSE_PROFILES` and run:
+
+```sh
+./setup.sh
+docker compose exec -w /etc/caddy caddy caddy reload
+```
+
+Changing a `LIVE_*` value works the same way as turning it on (the same three
+commands). A changed `mediamtx.yml` is only picked up when MediaMTX restarts,
+so also run `docker compose restart mediamtx`.
 
 ## Automated updates
 

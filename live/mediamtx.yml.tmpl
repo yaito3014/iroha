@@ -50,7 +50,7 @@ authInternalUsers:
       - action: api
   # Only OBS (with the secret) may publish; the stream key it uses becomes the path name.
   - user: publisher
-    pass: {{LIVE_PUBLISH_PASS}}
+    pass: "{{LIVE_PUBLISH_PASS}}"   # setup.sh allows only [A-Za-z0-9._~-]
     ips: []
     permissions:
       - action: publish
