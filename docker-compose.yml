@@ -22,7 +22,7 @@ services:
       - caddy-config:/config
 
   headscale:
-    image: headscale/headscale:0.26@sha256:ea9b5ee06274d757a4d52103de56cd11a9c393acb19d9a35f4b9fe52ada410de     # pin to a release; see README
+    image: headscale/headscale:v0.29@sha256:11f81665e842809db9fe3006a38c56a66e968baa5abd4bac498e86445572b970     # pin to a release; see README
     command: ["serve"]
     restart: unless-stopped
     depends_on:
