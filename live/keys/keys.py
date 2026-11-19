@@ -6,8 +6,13 @@ stream name is free. Two listeners keep the halves apart:
 
 - :8000 /auth is MediaMTX's HTTP auth hook (authMethod: http). Only MediaMTX
   calls it; Caddy has no route to it.
-- :8001 /keys/me is the panel's key API, reached only through Caddy's forward
-  auth, which sets X-Authentik-Username (and strips any client-sent copy).
+- :8001 serves the panel, reached only through Caddy's forward auth, which
+  sets X-Authentik-Username (and strips any client-sent copy): /keys/me is the
+  caller's key, and /api/v3/... is a filtered view of MediaMTX's API. The
+  filter passes only the lists the panel reads, blanks every connection's
+  query (where RTMP carries the key), names the streamer behind each
+  connection, and lets a streamer kick only their own streams and their
+  viewers.
 
 Stdlib only, so it runs on the stock python image without a build step.
 """
@@ -17,16 +22,19 @@ import ipaddress
 import json
 import logging
 import os
+import re
 import secrets
 import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
+from collections import OrderedDict
 from collections.abc import Callable, Mapping
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Protocol
+from typing import NamedTuple, Protocol
 
 log = logging.getLogger("keys")
 
@@ -43,8 +51,21 @@ KICK_ENDPOINTS = {
     "srt": "srtconns",
 }
 
+# The API lists the panel reads; everything else in MediaMTX's API is hidden.
+LIST_ENDPOINTS = frozenset(
+    {
+        "/v3/paths/list",
+        "/v3/rtmpconns/list",
+        "/v3/rtspsessions/list",
+        "/v3/webrtcsessions/list",
+    }
+)
+# Connection lists the panel may kick from (srt is off in mediamtx.yml).
+KICKABLE = frozenset({"rtmpconns", "rtspsessions", "webrtcsessions"})
+
 MAX_BODY = 64 * 1024
-SESSIONS_PER_USER = 32
+# Connections remembered for attribution and kicks; old ones fall off first.
+MAX_CONNS = 1024
 
 
 def _field(req: Mapping[str, object], key: str) -> str:
@@ -174,43 +195,65 @@ def authentik_group_fetcher(
     return fetch
 
 
-class Kicker(Protocol):
-    def __call__(self, protocol: str, conn_id: str) -> None: ...
+class UpstreamError(Exception):
+    """A MediaMTX API call failed; status is its HTTP status (502: unreachable)."""
+
+    def __init__(self, status: int) -> None:
+        super().__init__(f"MediaMTX API: HTTP {status}")
+        self.status = status
 
 
-def mediamtx_kicker(api_base: str, timeout: float = 5) -> Kicker:
-    def kick(protocol: str, conn_id: str) -> None:
-        endpoint = KICK_ENDPOINTS.get(protocol)
-        if endpoint is None:
-            log.warning("cannot kick %s connection %s", protocol, conn_id)
-            return
-        url = f"{api_base}/v3/{endpoint}/kick/{urllib.parse.quote(conn_id)}"
+class MediaMTX(Protocol):
+    def get(self, path: str) -> object: ...
+    def post(self, path: str) -> None: ...
+
+
+class MediaMTXClient:
+    def __init__(self, base_url: str, timeout: float = 5) -> None:
+        self._base = base_url
+        self._timeout = timeout
+
+    def _call(self, method: str, path: str) -> bytes:
+        data = b"" if method == "POST" else None
+        req = urllib.request.Request(self._base + path, data=data, method=method)
         try:
-            urllib.request.urlopen(
-                urllib.request.Request(url, data=b"", method="POST"), timeout=timeout
-            ).close()
+            with urllib.request.urlopen(req, timeout=self._timeout) as res:
+                return bytes(res.read())
         except urllib.error.HTTPError as e:
             e.close()
-            if e.code != 404:  # 404: the connection already ended
-                log.warning("kick %s %s: HTTP %d", protocol, conn_id, e.code)
+            raise UpstreamError(e.code) from None
         except OSError as e:
-            log.warning("kick %s %s: %s", protocol, conn_id, e)
+            log.warning("MediaMTX API %s %s: %s", method, path, e)
+            raise UpstreamError(502) from None
 
-    return kick
+    def get(self, path: str) -> object:
+        try:
+            return json.loads(self._call("GET", path))
+        except ValueError:
+            raise UpstreamError(502) from None
+
+    def post(self, path: str) -> None:
+        self._call("POST", path)
 
 
 class Members(Protocol):
     def __call__(self, user: str) -> bool: ...
 
 
+class _Conn(NamedTuple):
+    user: str
+    protocol: str
+
+
 class App:
-    def __init__(self, store: KeyStore, members: Members, kick: Kicker) -> None:
+    def __init__(self, store: KeyStore, members: Members, api: MediaMTX) -> None:
         self.store = store
         self.members = members
-        self.kick = kick
+        self.api = api
         self._lock = threading.Lock()
-        # user -> (protocol, connection id) of streams they started.
-        self._sessions: dict[str, list[tuple[str, str]]] = {}
+        # Connection id -> who published on it. In memory only: a restart
+        # forgets running streams (they keep running, unattributed).
+        self._conns: OrderedDict[str, _Conn] = OrderedDict()
 
     def authorize(self, req: Mapping[str, object]) -> bool:
         """Decide one MediaMTX auth request (its JSON body, decoded)."""
@@ -224,7 +267,7 @@ class App:
             ok = user is not None and self.members(user)
             if ok and user is not None:
                 ok = self._remember(
-                    key, user, _field(req, "protocol"), _field(req, "id")
+                    key, _field(req, "id"), user, _field(req, "protocol")
                 )
         elif action == "api":
             ok = _api_ip_allowed(_field(req, "ip"))
@@ -242,29 +285,100 @@ class App:
         )
         return ok
 
-    def _remember(self, key: str, user: str, protocol: str, conn_id: str) -> bool:
+    def _remember(self, key: str, conn_id: str, user: str, protocol: str) -> bool:
         """Record a publish, unless its key was reset since it was checked."""
         # Under the lock reset_key holds while it replaces the key and takes
-        # the sessions to kick: either this session is among them, or the
+        # the connections to kick: either this one is among them, or the
         # key no longer matches here. The membership check before it is slow
         # (Authentik), so it stays outside.
         with self._lock:
             if self.store.owner(key) != user:
                 return False
-            sessions = self._sessions.setdefault(user, [])
-            sessions.append((protocol, conn_id))
-            del sessions[:-SESSIONS_PER_USER]
+            self._conns[conn_id] = _Conn(user, protocol)
+            self._conns.move_to_end(conn_id)
+            while len(self._conns) > MAX_CONNS:
+                self._conns.popitem(last=False)
         return True
+
+    def owner_of(self, conn_id: str) -> str | None:
+        with self._lock:
+            conn = self._conns.get(conn_id)
+        return conn.user if conn else None
+
+    def _kick(self, protocol: str, conn_id: str) -> None:
+        endpoint = KICK_ENDPOINTS.get(protocol)
+        if endpoint is None:
+            log.warning("cannot kick %s connection %s", protocol, conn_id)
+            return
+        try:
+            self.api.post(f"/v3/{endpoint}/kick/{conn_id}")
+        except UpstreamError as e:
+            if e.status != 404:  # 404: the connection already ended
+                log.warning("kick %s %s: %s", protocol, conn_id, e)
 
     def reset_key(self, user: str) -> str:
         """Issue a new key, then end the streams started with the old one."""
         with self._lock:
             key = self.store.reset(user)
-            sessions = self._sessions.pop(user, [])
-        for protocol, conn_id in sessions:
-            self.kick(protocol, conn_id)
-        log.info("reset key user=%r, kicked %d session(s)", user, len(sessions))
+            mine = [(cid, c) for cid, c in self._conns.items() if c.user == user]
+            for cid, _ in mine:
+                del self._conns[cid]
+        for cid, conn in mine:
+            self._kick(conn.protocol, cid)
+        log.info("reset key user=%r, kicked %d session(s)", user, len(mine))
         return key
+
+    def api_list(self, path: str) -> tuple[int, object]:
+        """One of the panel's MediaMTX lists, with keys removed."""
+        if path not in LIST_ENDPOINTS:
+            return 404, None
+        try:
+            data = self.api.get(path)
+        except UpstreamError as e:
+            return (404 if e.status == 404 else 502), None
+        items = data.get("items") if isinstance(data, dict) else None
+        if not isinstance(items, list):
+            return 502, None
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            if "query" in item:
+                item["query"] = ""
+            # MediaMTX's own "user" is the client-sent user=, which anyone can
+            # set; replace it with who the key belongs to.
+            if "user" in item:
+                item["user"] = self.owner_of(str(item.get("id"))) or ""
+        return 200, data
+
+    def api_kick(self, user: str, kind: str, conn_id: str) -> int:
+        """Kick a connection if it is the caller's stream or one of its viewers."""
+        if kind not in KICKABLE:
+            return 404
+        try:
+            conn_id = str(uuid.UUID(conn_id))  # canonical form, as MediaMTX uses
+        except ValueError:
+            return 404
+        try:
+            if self.owner_of(conn_id) != user and not self._reads_from(
+                user, kind, conn_id
+            ):
+                return 403
+            self.api.post(f"/v3/{kind}/kick/{conn_id}")
+        except UpstreamError as e:
+            return 404 if e.status == 404 else 502
+        log.info("kick %s %s by user=%r", kind, conn_id, user)
+        return 200
+
+    def _reads_from(self, user: str, kind: str, conn_id: str) -> bool:
+        """Whether the connection is on a path `user` is publishing right now."""
+        target = self.api.get(f"/v3/{kind}/get/{conn_id}")
+        path = target.get("path") if isinstance(target, dict) else None
+        if not isinstance(path, str) or not path:
+            return False
+        info = self.api.get("/v3/paths/get/" + urllib.parse.quote(path, safe="/"))
+        source = info.get("source") if isinstance(info, dict) else None
+        source_id = source.get("id") if isinstance(source, dict) else None
+        return isinstance(source_id, str) and self.owner_of(source_id) == user
 
 
 def _api_ip_allowed(ip: str) -> bool:
@@ -319,6 +433,9 @@ def make_auth_server(address: tuple[str, int], app: App) -> ThreadingHTTPServer:
     return ThreadingHTTPServer(address, AuthHandler)
 
 
+KICK_PATH = re.compile(r"/api/v3/([a-z]+)/kick/([^/]+)")
+
+
 def make_keys_server(address: tuple[str, int], app: App) -> ThreadingHTTPServer:
     class KeysHandler(_Handler):
         def user(self) -> str | None:
@@ -332,25 +449,36 @@ def make_keys_server(address: tuple[str, int], app: App) -> ThreadingHTTPServer:
                 return None
             return user
 
+        def from_panel(self) -> bool:
+            # A cross-site form cannot set this header without a CORS preflight,
+            # so a foreign page cannot make the caller's browser change things.
+            if self.headers.get("X-Requested-With") == "live-panel":
+                return True
+            self.reply(403)
+            return False
+
         def do_GET(self) -> None:
-            if self.path != "/keys/me":
+            path = urllib.parse.urlsplit(self.path).path
+            if path == "/keys/me":
+                if user := self.user():
+                    self.reply(200, {"user": user, "key": app.store.get(user)})
+            elif path.startswith("/api/"):
+                if self.user():
+                    self.reply(*app.api_list(path.removeprefix("/api")))
+            else:
                 self.reply(404)
-                return
-            if user := self.user():
-                self.reply(200, {"user": user, "key": app.store.get(user)})
 
         def do_POST(self) -> None:
-            if self.path != "/keys/me/reset":
+            path = urllib.parse.urlsplit(self.path).path
+            kick = KICK_PATH.fullmatch(path)
+            if path == "/keys/me/reset":
+                if (user := self.user()) and self.from_panel():
+                    self.reply(200, {"user": user, "key": app.reset_key(user)})
+            elif kick:
+                if (user := self.user()) and self.from_panel():
+                    self.reply(app.api_kick(user, kick[1], kick[2]))
+            else:
                 self.reply(404)
-                return
-            if not (user := self.user()):
-                return
-            # A cross-site form cannot set this header without a CORS preflight,
-            # so a foreign page cannot reset someone's key.
-            if self.headers.get("X-Requested-With") != "live-panel":
-                self.reply(403)
-                return
-            self.reply(200, {"user": user, "key": app.reset_key(user)})
 
     return ThreadingHTTPServer(address, KeysHandler)
 
@@ -370,12 +498,12 @@ def main() -> None:
     app = App(
         KeyStore(Path(env.get("KEYS_FILE", "/data/keys.json"))),
         members,
-        mediamtx_kicker(env.get("MEDIAMTX_API", "http://mediamtx:9997")),
+        MediaMTXClient(env.get("MEDIAMTX_API", "http://mediamtx:9997")),
     )
     auth = make_auth_server(("0.0.0.0", 8000), app)
     keys = make_keys_server(("0.0.0.0", 8001), app)
     threading.Thread(target=auth.serve_forever, daemon=True).start()
-    log.info("auth hook on :8000, key API on :8001")
+    log.info("auth hook on :8000, panel API on :8001")
     keys.serve_forever()
 
 
