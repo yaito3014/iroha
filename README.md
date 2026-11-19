@@ -81,7 +81,8 @@ publishes over RTMP; viewers watch over WebRTC or RTSP) plus a small control
 panel. It is kept apart from Headscale on purpose:
 
 - **Its own directory.** `live/` holds its compose file, MediaMTX config
-  template, Caddy site template and panel. The root `docker-compose.yml` only
+  template, Caddy site template, panel and stream-key service (`keys/`). The
+  root `docker-compose.yml` only
   `include`s it.
 - **One switch.** Every live service is in the `live` compose profile.
   `.env.example` turns it on (`COMPOSE_PROFILES=live`), and setup.sh renders
@@ -96,9 +97,33 @@ Routing on `LIVE_HOST`:
 
 | Path | Goes to | Access |
 | --- | --- | --- |
-| `/` | panel | Authentik login (forward auth) |
-| `/api/*` | MediaMTX API | Authentik login (forward auth) |
-| anything else | MediaMTX (viewer pages, WHIP/WHEP) | MediaMTX users: anyone may read; publishing needs `LIVE_PUBLISH_PASS` |
+| `/` | panel | Authentik login (forward auth), `streamers` only |
+| `/api/*` | MediaMTX API | Authentik login (forward auth), `streamers` only |
+| `/keys/*` | keys service: the caller's own stream key | Authentik login (forward auth), `streamers` only |
+| anything else | MediaMTX (viewer pages, WHIP/WHEP) | anyone may watch; publishing needs a stream key |
+
+### Stream keys
+
+Every member of the Authentik group `streamers` has their own stream key,
+shown (and reset) on the panel. In OBS, use the server
+`rtmp://<LIVE_HOST>:1935/` and the stream key `<name>?pass=<key>`, which the
+panel builds for you. The key alone identifies the streamer; `<name>` is free
+and becomes the stream path. A name that is live cannot be taken over by
+another publisher (`overridePublisher: false`).
+
+MediaMTX asks the `keys` service (`live/keys/keys.py`) about every publish. It
+allows the stream if the key belongs to a user who is currently in
+`streamers` (looked up through the Authentik API, cached for a minute; during
+an Authentik outage the last answer is used for up to an hour). Removing
+someone from the group stops their next publish; disconnect a running stream
+from the panel. Resetting a key also disconnects the streams started with the
+old one.
+
+Keys are kept as-is in the `live-keys` volume (`keys.json`), so the panel can
+show them again; `ops/update.sh` backs the volume up. Anyone with that file or
+a backup of it can read every key. If it is lost, streamers create new keys.
+
+### Setup
 
 Set its values in `.env` (setup.sh refuses to run while live is on and they
 are missing):
@@ -106,22 +131,24 @@ are missing):
 ```sh
 COMPOSE_PROFILES=live           # the default; remove "live" to turn it off
 LIVE_HOST=live.example.com      # A record -> this VPS, DNS-only; also advertised to WebRTC clients
-LIVE_PUBLISH_PASS=<random>      # A-Z a-z 0-9 . _ ~ - only; e.g. openssl rand -hex 16
+LIVE_AUTHENTIK_TOKEN=<token>    # see "In Authentik" below
 ```
 
 You also need:
 
 - **Ports:** open 1935/tcp (RTMP), 554/tcp (RTSP) and 8189/tcp+udp (WebRTC
   media).
-- **In Authentik:** a Proxy provider in forward-auth mode for `LIVE_HOST`, with
-  its application bound to the embedded outpost.
+- **In Authentik:**
+  - a group `streamers`;
+  - a Proxy provider in forward-auth mode for `LIVE_HOST`, with its
+    application bound to the embedded outpost and to the `streamers` group
+    (Policy / Group / User Bindings);
+  - a service account (e.g. `live-keys`) with a role that may only view the
+    `streamers` group (object permission "Can view group" on that group), and
+    a non-expiring API token for it. Put the token in `LIVE_AUTHENTIK_TOKEN`.
 - **On the Authentik host:** its Caddy must trust this VPS's
   `X-Forwarded-*` headers (`trusted_proxies`), or the outpost cannot match the
   application.
-
-In OBS, use the server `rtmp://<LIVE_HOST>:1935/` and the stream key
-`<name>?user=publisher&pass=<LIVE_PUBLISH_PASS>`. `<name>` becomes the stream
-path.
 
 ### Turning live on or off
 
@@ -141,7 +168,7 @@ docker compose exec -w /etc/caddy caddy caddy reload
 To turn it off, remove the containers first, while the profile is still known:
 
 ```sh
-docker compose --profile live rm -sf mediamtx panel
+docker compose --profile live rm -sf mediamtx panel keys
 ```
 
 Then remove `live` from `COMPOSE_PROFILES` and run:

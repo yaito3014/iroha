@@ -1,5 +1,4 @@
 # Rendered by setup.sh to live/mediamtx.yml — edit the .tmpl, not the output.
-# The publisher password comes from LIVE_PUBLISH_PASS in .env (never commit it).
 
 logLevel: info
 
@@ -36,27 +35,17 @@ webrtcHandshakeTimeout: 10s
 webrtcTrackGatherTimeout: 2s
 webrtcSTUNGatherTimeout: 5s
 
-authMethod: internal
-authInternalUsers:
-  # Anyone may watch.
-  - user: any
-    pass:
-    ips: []
-    permissions:
-      - action: read
-  # API only from the host / docker network.
-  - user: any
-    pass:
-    ips: ['127.0.0.1', '::1', '172.16.0.0/12']
-    permissions:
-      - action: api
-  # Only OBS (with the secret) may publish; the stream key it uses becomes the path name.
-  - user: publisher
-    pass: "{{LIVE_PUBLISH_PASS}}"   # setup.sh allows only [A-Za-z0-9._~-]
-    ips: []
-    permissions:
-      - action: publish
+# The keys service (keys/keys.py) decides: publishing needs a streamer's own
+# key (?pass=<key>), and the API is allowed from the host / docker network only.
+# Watching is excluded from the hook, so anyone may watch.
+authMethod: http
+authHTTPAddress: http://keys:8000/auth
+authHTTPExclude:
+  - action: read
 
 paths:
-  # Accept any path name; the OBS stream key chooses it (e.g. rtspt://{{LIVE_HOST}}/<key>).
+  # Accept any path name; the OBS stream key chooses it (e.g. rtspt://{{LIVE_HOST}}/<name>).
   all_others:
+    # Names are free for every streamer, so do not let a second publisher
+    # disconnect the one already live on a name.
+    overridePublisher: false

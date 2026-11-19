@@ -24,3 +24,24 @@ services:
     restart: unless-stopped
     volumes:
       - ./panel:/usr/share/nginx/html:ro
+
+  # Per-user stream keys: MediaMTX's auth hook (:8000, internal only) and the
+  # panel's key API (:8001, via Caddy forward auth). See keys/keys.py.
+  keys:
+    image: python:3.14-alpine@sha256:5862d971d1f0ae26b258cefa4e893556b1d3aba81bd2ff30888704ad378bab67
+    profiles: ["live"]
+    restart: unless-stopped
+    command: ["python", "-I", "/app/keys.py"]
+    environment:
+      AUTHENTIK_URL: "https://${ID_HOST}"
+      AUTHENTIK_TOKEN: "${LIVE_AUTHENTIK_TOKEN}"
+      AUTHENTIK_GROUP: streamers
+    volumes:
+      - ./keys/keys.py:/app/keys.py:ro
+      - live-keys:/data        # keys.json: the stream keys; back it up
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+volumes:
+  live-keys:
