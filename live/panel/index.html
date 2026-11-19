@@ -20,6 +20,7 @@
   .meta { color:var(--muted); font-size:13px; margin-bottom:10px; }
   .urls div { display:flex; gap:6px; align-items:center; margin:4px 0; }
   .urls code { flex:1; background:#0b0d11; border:1px solid var(--line); border-radius:6px; padding:5px 8px; font-size:12.5px; overflow:auto; white-space:nowrap; }
+  input { background:#0b0d11; color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:5px 8px; font:12.5px ui-monospace,monospace; }
   button { background:#232835; color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:5px 10px; font-size:12.5px; cursor:pointer; }
   button:hover { border-color:var(--accent); }
   button.danger { color:var(--bad); }
@@ -44,10 +45,14 @@
     <div id="readers"></div>
   </section>
   <section>
-    <h3>Publish from OBS</h3>
+    <h3>Your stream key</h3>
     <div class="card">
-      <div class="meta">Service: Custom · Server: <code>rtmp://<span class="host"></span>:1935/</code> · Stream key: <code>&lt;name&gt;?user=&lt;user&gt;&amp;pass=&lt;secret&gt;</code></div>
-      <div class="meta">The name you choose becomes the path. Viewers then use the URLs shown on the stream card.</div>
+      <div class="meta">OBS: Service <b>Custom</b> · Server <code>rtmp://<span class="host"></span>:1935/</code> · Stream key below</div>
+      <div class="urls">
+        <div><span class="meta">stream name</span><input id="sname" value="live" size="16" oninput="renderKey()"></div>
+        <div><code id="skey">loading…</code><button id="kshow" onclick="toggleKey()">show</button><button id="kcopy" onclick="copyKey()">copy</button><button class="danger" id="kreset" onclick="resetKey()">reset</button></div>
+      </div>
+      <div class="meta">Any free stream name works; viewers use it in the URLs on the stream card. The key is yours alone, so keep it off screen while streaming. Reset issues a new key and disconnects streams that use the old one.</div>
     </div>
   </section>
 </main>
@@ -64,7 +69,7 @@ const api = async (p, opt) => {
 const fmtBytes = (b) => b > 1e9 ? (b/1e9).toFixed(2)+' GB' : b > 1e6 ? (b/1e6).toFixed(1)+' MB' : b > 1e3 ? (b/1e3).toFixed(0)+' kB' : b+' B';
 const since = (iso) => { if (!iso) return '–'; const s = Math.max(0, (Date.now() - new Date(iso)) / 1000); const h = Math.floor(s/3600), m = Math.floor(s%3600/60), x = Math.floor(s%60); return (h ? h+'h ' : '') + (m ? m+'m ' : '') + x + 's'; };
 const esc = (s) => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const userOf = (q) => { const m = /(?:^|&)user=([^&]*)/.exec(q || ''); return m ? decodeURIComponent(m[1]) : '?'; };
+const PROTO = { rtmpconns: 'RTMP', rtspsessions: 'RTSP', webrtcsessions: 'WebRTC' };
 const ipOf = (a) => (a || '').replace(/:\d+$/, '').replace(/^\[|\]$/g, '');
 const copy = (t) => navigator.clipboard && navigator.clipboard.writeText(t);
 window.copyText = copy;
@@ -98,7 +103,7 @@ async function refresh() {
       return `<div class="card">
         <h2><span class="dot ok"></span>${esc(p.name)}</h2>
         <div class="meta">
-          publisher <b>${esc(pub ? userOf(pub.c.query) : (p.source ? p.source.type : '?'))}</b>
+          published via <b>${esc(pub ? PROTO[pub.kind] : (p.source ? p.source.type : '?'))}</b>
           ${pub ? ' from ' + esc(ipOf(pub.c.remoteAddr)) : ''} · up ${since(p.readyTime)}
           · ${esc(p.tracks.join(' + '))} · ${fmtRate(r)} · ${fmtBytes(p.bytesReceived)} in
           · <b>${nReaders}</b> viewer${nReaders === 1 ? '' : 's'}
@@ -132,6 +137,31 @@ async function refresh() {
 }
 refresh();
 setInterval(refresh, 3000);
+
+// The caller's own key, from the keys service (Caddy forward auth names the caller).
+let myKey = null, keyShown = false;
+const keyApi = async (reset) => {
+  const r = await fetch('/keys/me' + (reset ? '/reset' : ''), reset
+    ? { method: 'POST', headers: { 'X-Requested-With': 'live-panel' } }
+    : { cache: 'no-store' });
+  if (!r.ok) throw new Error(r.status + ' /keys/me');
+  return (await r.json()).key;
+};
+const fullKey = () => ($('sname').value.trim() || 'live') + '?pass=' + myKey;
+function renderKey() {
+  $('skey').textContent = myKey ? (keyShown ? fullKey() : ($('sname').value.trim() || 'live') + '?pass=••••••••') : 'no key yet';
+  $('kshow').style.display = $('kcopy').style.display = myKey ? '' : 'none';
+  $('kshow').textContent = keyShown ? 'hide' : 'show';
+  $('kreset').textContent = myKey ? 'reset' : 'create key';
+}
+window.renderKey = renderKey;
+window.toggleKey = () => { keyShown = !keyShown; renderKey(); };
+window.copyKey = () => copy(fullKey());
+window.resetKey = async () => {
+  if (myKey && !confirm('Issue a new key? Streams using the current one are disconnected.')) return;
+  try { myKey = await keyApi(true); renderKey(); } catch (e) { alert(e.message); }
+};
+keyApi(false).then(k => { myKey = k; renderKey(); }).catch(e => { $('skey').textContent = 'error: ' + e.message; });
 </script>
 </body>
 </html>
