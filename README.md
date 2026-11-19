@@ -98,7 +98,7 @@ Routing on `LIVE_HOST`:
 | Path | Goes to | Access |
 | --- | --- | --- |
 | `/` | panel | Authentik login (forward auth), `streamers` only |
-| `/api/*` | MediaMTX API | Authentik login (forward auth), `streamers` only |
+| `/api/*` | keys service: filtered MediaMTX API (see below) | Authentik login (forward auth), `streamers` only |
 | `/keys/*` | keys service: the caller's own stream key | Authentik login (forward auth), `streamers` only |
 | anything else | MediaMTX (viewer pages, WHIP/WHEP) | anyone may watch; publishing needs a stream key |
 
@@ -114,10 +114,23 @@ another publisher (`overridePublisher: false`).
 MediaMTX asks the `keys` service (`live/keys/keys.py`) about every publish. It
 allows the stream if the key belongs to a user who is currently in
 `streamers` (looked up through the Authentik API, cached for a minute; during
-an Authentik outage the last answer is used for up to an hour). Removing
-someone from the group stops their next publish; disconnect a running stream
-from the panel. Resetting a key also disconnects the streams started with the
-old one.
+an Authentik outage the last answer is used for up to an hour). Resetting a
+key also disconnects the streams started with the old one.
+
+The panel reads MediaMTX's API through the keys service, never directly. It
+passes only the lists the panel shows (paths, RTMP connections, RTSP and
+WebRTC sessions), blanks every connection's query (where RTMP carries the
+key), and fills each connection's `user` with the streamer whose key opened
+it. That record lives in memory, so after the keys service restarts, streams
+already running show no streamer until they reconnect. A streamer can kick
+only their own stream and its viewers. Removing
+someone from `streamers` stops their next publish; to end a stream they are
+running, kick it from iroha's shell, where MediaMTX's own API is on
+`127.0.0.1:9997`:
+
+```sh
+curl -X POST http://127.0.0.1:9997/v3/rtmpconns/kick/<id>   # ids: .../rtmpconns/list
+```
 
 Keys are kept as-is in the `live-keys` volume (`keys.json`), so the panel can
 show them again; `ops/update.sh` backs the volume up. Anyone with that file or

@@ -8,19 +8,12 @@
             header_up Host {upstream_hostport}
         }
     }
-    handle /api/* {
-        forward_auth https://{{ID_HOST}} {
-            uri /outpost.goauthentik.io/auth/caddy
-            copy_headers X-Authentik-Username X-Authentik-Email
-            trusted_proxies private_ranges
-            header_up Host {upstream_hostport}
-        }
-        uri strip_prefix /api
-        reverse_proxy mediamtx:9997
-    }
-    # The caller's own stream key. forward_auth replaces any client-sent
+    # The panel's data, both from the keys service: the caller's own stream key
+    # (/keys/*) and a filtered view of MediaMTX's API (/api/*), which never
+    # shows anyone's key. forward_auth replaces any client-sent
     # X-Authentik-Username with Authentik's, which the keys service trusts.
-    handle /keys/* {
+    @panel_data path /api/* /keys/*
+    handle @panel_data {
         forward_auth https://{{ID_HOST}} {
             uri /outpost.goauthentik.io/auth/caddy
             copy_headers X-Authentik-Username
