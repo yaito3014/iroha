@@ -16,3 +16,5 @@ jobs:
         run: cp .env.example .env && docker compose config --quiet
       - name: Shell scripts parse
         run: for f in setup.sh ops/*.sh; do sh -n "$f"; done
+      - name: live/keys tests
+        run: python3 -m unittest discover -s live/keys
