@@ -33,6 +33,13 @@ dns:
   # resolver by keeping it explicitly false.
   override_local_dns: false
 
+node:
+  # "0" disables node expiry so unattended servers never silently drop off the
+  # tailnet. Trade-off: expire lost devices manually (`headscale nodes expire`).
+  # Since headscale 0.29 this applies to OIDC logins too, and the old
+  # oidc.expiry key stops the server from starting.
+  expiry: "0"
+
 oidc:
   # Authentik per-application issuer. The trailing slash is required: it must
   # match the `issuer` value in Authentik's discovery document exactly, or the
@@ -43,9 +50,5 @@ oidc:
   pkce:
     enabled: true
   scope: ["openid", "profile", "email"]
-  # "0" disables node expiry so unattended servers never silently drop off the
-  # tailnet. Trade-off: expire lost devices manually (`headscale nodes expire`).
-  # headscale 0.26 has no top-level node.expiry; node lifetime is OIDC-driven.
-  expiry: "0"
   allowed_users:
     - {{ADMIN_EMAIL}}
