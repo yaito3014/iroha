@@ -223,7 +223,9 @@ class App:
             user = self.store.owner(key)
             ok = user is not None and self.members(user)
             if ok and user is not None:
-                self._remember(user, _field(req, "protocol"), _field(req, "id"))
+                ok = self._remember(
+                    key, user, _field(req, "protocol"), _field(req, "id")
+                )
         elif action == "api":
             ok = _api_ip_allowed(_field(req, "ip"))
         else:
@@ -240,16 +242,24 @@ class App:
         )
         return ok
 
-    def _remember(self, user: str, protocol: str, conn_id: str) -> None:
+    def _remember(self, key: str, user: str, protocol: str, conn_id: str) -> bool:
+        """Record a publish, unless its key was reset since it was checked."""
+        # Under the lock reset_key holds while it replaces the key and takes
+        # the sessions to kick: either this session is among them, or the
+        # key no longer matches here. The membership check before it is slow
+        # (Authentik), so it stays outside.
         with self._lock:
+            if self.store.owner(key) != user:
+                return False
             sessions = self._sessions.setdefault(user, [])
             sessions.append((protocol, conn_id))
             del sessions[:-SESSIONS_PER_USER]
+        return True
 
     def reset_key(self, user: str) -> str:
         """Issue a new key, then end the streams started with the old one."""
-        key = self.store.reset(user)
         with self._lock:
+            key = self.store.reset(user)
             sessions = self._sessions.pop(user, [])
         for protocol, conn_id in sessions:
             self.kick(protocol, conn_id)

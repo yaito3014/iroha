@@ -314,6 +314,19 @@ class AuthorizeTest(unittest.TestCase):
             with self.subTest(action=action):
                 self.assertFalse(self.app.authorize(publish(self.alice, action=action)))
 
+    def test_reset_during_the_membership_check_wins(self) -> None:
+        # The key is reset while a publish with it waits on Authentik: the
+        # publish must not be allowed (and recorded) after the reset kicked.
+        def members(user: str) -> bool:
+            self.app.reset_key(user)
+            return True
+
+        self.app.members = members
+        self.assertFalse(self.app.authorize(publish(self.alice, id="late")))
+        self.app.members = FakeMembers("alice")
+        self.app.reset_key("alice")
+        self.assertEqual(self.kicker.kicked, [])
+
     def test_reset_kicks_the_users_streams_only(self) -> None:
         self.app.members = FakeMembers("alice", "bob")
         self.app.authorize(publish(self.alice, id="a1", protocol="rtmp"))
