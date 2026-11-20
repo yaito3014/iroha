@@ -125,9 +125,11 @@ WebRTC sessions), blanks every connection's query (where RTMP carries the
 key), and fills each connection's `user` with the streamer whose key opened
 it. That record (`conns.json` in the `live-keys` volume) survives restarts of
 the keys service; once a minute it drops the connections MediaMTX no longer
-has open. A streamer can kick only their own stream and its viewers. Removing
-someone from `streamers` stops their next publish; to end a stream they are
-running, kick it from iroha's shell, where MediaMTX's own API is on
+has open. A streamer can kick only their own stream and its viewers; members
+of the Authentik group `live-admins` (who must also be in `streamers` to reach
+the panel) can kick any stream or viewer. Removing someone from `streamers`
+stops their next publish; an admin then ends a stream they are running from
+the panel, or from iroha's shell, where MediaMTX's own API is on
 `127.0.0.1:9997`:
 
 ```sh
@@ -154,13 +156,16 @@ You also need:
 - **Ports:** open 1936/tcp (RTMPS), 1935/tcp (RTMP, until it is turned
   off), 554/tcp (RTSP) and 8189/tcp+udp (WebRTC media).
 - **In Authentik:**
-  - a group `streamers`;
+  - a group `streamers`, and a group `live-admins` for those who may kick
+    anyone (put them in both);
   - a Proxy provider in forward-auth mode for `LIVE_HOST`, with its
     application bound to the embedded outpost and to the `streamers` group
     (Policy / Group / User Bindings);
   - a service account (e.g. `live-keys`) with a role that may only view the
-    `streamers` group (object permission "Can view group" on that group), and
-    a non-expiring API token for it. Put the token in `LIVE_AUTHENTIK_TOKEN`.
+    `streamers` and `live-admins` groups (object permission "Can view group"
+    on each), and a non-expiring API token for it. Put the token in
+    `LIVE_AUTHENTIK_TOKEN`. Without the permission on `live-admins`, Authentik
+    hides that group from the token and nobody is an admin.
 - **On the Authentik host:** its Caddy must trust this VPS's
   `X-Forwarded-*` headers (`trusted_proxies`), or the outpost cannot match the
   application.

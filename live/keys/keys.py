@@ -254,10 +254,16 @@ class _Conn(NamedTuple):
 
 class App:
     def __init__(
-        self, store: KeyStore, members: Members, api: MediaMTX, conns_file: Path
+        self,
+        store: KeyStore,
+        members: Members,
+        admins: Members,
+        api: MediaMTX,
+        conns_file: Path,
     ) -> None:
         self.store = store
-        self.members = members
+        self.members = members  # may stream and use the panel
+        self.admins = admins  # may also kick anyone's streams and viewers
         self.api = api
         self._lock = threading.Lock()
         # Connection id -> who published on it, saved to conns_file so a
@@ -418,7 +424,8 @@ class App:
         return 200, data
 
     def api_kick(self, user: str, kind: str, conn_id: str) -> int:
-        """Kick a connection if it is the caller's stream or one of its viewers."""
+        """Kick a connection if it is the caller's stream or one of its viewers,
+        or any connection if the caller is an admin."""
         if kind not in KICKABLE:
             return 404
         try:
@@ -426,8 +433,10 @@ class App:
         except ValueError:
             return 404
         try:
-            if self.owner_of(conn_id) != user and not self._reads_from(
-                user, kind, conn_id
+            if (
+                self.owner_of(conn_id) != user
+                and not self.admins(user)
+                and not self._reads_from(user, kind, conn_id)
             ):
                 return 403
             self.api.post(f"/v3/{kind}/kick/{conn_id}")
@@ -504,6 +513,11 @@ KICK_PATH = re.compile(r"/api/v3/([a-z]+)/kick/([^/]+)")
 
 
 def make_keys_server(address: tuple[str, int], app: App) -> ThreadingHTTPServer:
+    def me(user: str, key: str | None) -> dict[str, object]:
+        # "admin" only decides which kick buttons the panel shows; api_kick
+        # checks it again.
+        return {"user": user, "key": key, "admin": app.admins(user)}
+
     class KeysHandler(_Handler):
         def user(self) -> str | None:
             """The caller, or None after replying with an error."""
@@ -528,7 +542,7 @@ def make_keys_server(address: tuple[str, int], app: App) -> ThreadingHTTPServer:
             path = urllib.parse.urlsplit(self.path).path
             if path == "/keys/me":
                 if user := self.user():
-                    self.reply(200, {"user": user, "key": app.store.get(user)})
+                    self.reply(200, me(user, app.store.get(user)))
             elif path.startswith("/api/"):
                 if self.user():
                     self.reply(*app.api_list(path.removeprefix("/api")))
@@ -540,7 +554,7 @@ def make_keys_server(address: tuple[str, int], app: App) -> ThreadingHTTPServer:
             kick = KICK_PATH.fullmatch(path)
             if path == "/keys/me/reset":
                 if (user := self.user()) and self.from_panel():
-                    self.reply(200, {"user": user, "key": app.reset_key(user)})
+                    self.reply(200, me(user, app.reset_key(user)))
             elif kick:
                 if (user := self.user()) and self.from_panel():
                     self.reply(app.api_kick(user, kick[1], kick[2]))
@@ -564,16 +578,18 @@ def main() -> None:
         level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
     )
     env = os.environ
-    members = GroupMembers(
-        authentik_group_fetcher(
-            env["AUTHENTIK_URL"].rstrip("/"),
-            env.get("AUTHENTIK_GROUP", "streamers"),
-            env["AUTHENTIK_TOKEN"],
+
+    def group(name: str) -> GroupMembers:
+        return GroupMembers(
+            authentik_group_fetcher(
+                env["AUTHENTIK_URL"].rstrip("/"), name, env["AUTHENTIK_TOKEN"]
+            )
         )
-    )
+
     app = App(
         KeyStore(Path(env.get("KEYS_FILE", "/data/keys.json"))),
-        members,
+        group(env.get("AUTHENTIK_GROUP", "streamers")),
+        group(env.get("AUTHENTIK_ADMIN_GROUP", "live-admins")),
         MediaMTXClient(env.get("MEDIAMTX_API", "http://mediamtx:9997")),
         Path(env.get("CONNS_FILE", "/data/conns.json")),
     )

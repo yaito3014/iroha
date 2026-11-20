@@ -47,6 +47,7 @@ services:
       AUTHENTIK_URL: "https://${ID_HOST}"
       AUTHENTIK_TOKEN: "${LIVE_AUTHENTIK_TOKEN}"
       AUTHENTIK_GROUP: streamers
+      AUTHENTIK_ADMIN_GROUP: live-admins
     volumes:
       - ./keys/keys.py:/app/keys.py:ro
       - live-keys:/data        # keys.json (the stream keys; back it up), conns.json
