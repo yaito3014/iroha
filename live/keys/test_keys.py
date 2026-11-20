@@ -296,6 +296,7 @@ class AuthorizeTest(unittest.TestCase):
         self.app = App(
             self.store,
             FakeMembers("alice"),
+            FakeMembers(),
             self.api,
             Path(self.dir.name) / "conns.json",
         )
@@ -413,6 +414,7 @@ class ApiFilterTest(unittest.TestCase):
         self.app = App(
             self.store,
             FakeMembers("alice", "bob"),
+            FakeMembers(),
             self.api,
             Path(self.dir.name) / "conns.json",
         )
@@ -495,6 +497,15 @@ class ApiFilterTest(unittest.TestCase):
         self.assertEqual(self.app.api_kick("alice", "rtspsessions", R), 200)
         self.assertEqual(self.api.posts, [f"/v3/rtspsessions/kick/{R}"])
 
+    def test_admins_kick_any_stream_or_viewer(self) -> None:
+        self.app.admins = FakeMembers("alice")
+        self.assertEqual(self.app.api_kick("alice", "rtmpconns", B), 200)
+        self.assertEqual(self.app.api_kick("alice", "rtspsessions", S), 200)
+        self.assertEqual(
+            self.api.posts, [f"/v3/rtmpconns/kick/{B}", f"/v3/rtspsessions/kick/{S}"]
+        )
+        self.assertEqual(self.app.api_kick("alice", "config", B), 404)
+
     def test_cannot_kick_others(self) -> None:
         for kind, conn in (("rtmpconns", B), ("rtspsessions", S)):
             with self.subTest(conn=conn):
@@ -576,7 +587,9 @@ class ConnRecordTest(unittest.TestCase):
 
     def new_app(self) -> App:
         conns = Path(self.dir.name) / "conns.json"
-        return App(self.store, FakeMembers("alice", "bob"), self.api, conns)
+        return App(
+            self.store, FakeMembers("alice", "bob"), FakeMembers(), self.api, conns
+        )
 
     def test_a_restart_keeps_the_record(self) -> None:
         self.app.authorize(publish(self.alice, id="a1", protocol="rtmp"))
@@ -656,6 +669,7 @@ class ServersTest(unittest.TestCase):
         self.app = App(
             self.store,
             FakeMembers("alice"),
+            FakeMembers(),
             self.api,
             Path(self.dir.name) / "conns.json",
         )
@@ -699,7 +713,11 @@ class ServersTest(unittest.TestCase):
             status, headers, body = Http.request(me, headers=alice)
             self.assertEqual(status, 200)
             self.assertEqual(headers.get("Cache-Control"), "no-store")
-            self.assertEqual(json.loads(body), {"user": "alice", "key": None})
+            self.assertEqual(
+                json.loads(body), {"user": "alice", "key": None, "admin": False}
+            )
+            self.app.admins = FakeMembers("alice")
+            self.assertTrue(json.loads(Http.request(me, headers=alice)[2])["admin"])
 
             # Reset needs the panel's header (a cross-site form cannot send it).
             self.assertEqual(Http.request(me + "/reset", "POST", b"", alice)[0], 403)

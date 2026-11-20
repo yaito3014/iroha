@@ -71,8 +71,11 @@ const api = async (p, post) => {
   if (!r.ok) throw new Error(r.status + ' ' + p);
   return post ? r : r.json();
 };
-let me = null;  // the signed-in streamer, from /keys/me
+let me = null, admin = false;  // the signed-in streamer, from /keys/me
 const isMine = (pub) => !!pub && me !== null && pub.c.user === me;
+// Kick buttons: on your own stream and its viewers, or on everything for a
+// member of live-admins (the keys service checks again).
+const canKick = (pub) => admin || isMine(pub);
 const fmtBytes = (b) => b > 1e9 ? (b/1e9).toFixed(2)+' GB' : b > 1e6 ? (b/1e6).toFixed(1)+' MB' : b > 1e3 ? (b/1e3).toFixed(0)+' kB' : b+' B';
 const since = (iso) => { if (!iso) return '–'; const s = Math.max(0, (Date.now() - new Date(iso)) / 1000); const h = Math.floor(s/3600), m = Math.floor(s%3600/60), x = Math.floor(s%60); return (h ? h+'h ' : '') + (m ? m+'m ' : '') + x + 's'; };
 const esc = (s) => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -121,7 +124,7 @@ async function refresh() {
           <div><code>rtsp://${HOST}/${esc(p.name)}</code><button onclick="copyText('rtsp://${HOST}/${esc(p.name)}')">copy</button><span class="meta">VLC</span></div>
           <div><code>https://${HOST}/${esc(p.name)}/</code><button onclick="copyText('https://${HOST}/${esc(p.name)}/')">copy</button><a class="meta" href="/${esc(p.name)}/" target="_blank">open</a></div>
         </div>
-        ${isMine(pub) ? `<div style="margin-top:10px"><button class="danger" onclick="kick('${pub.kind}','${pub.c.id}')">disconnect</button></div>` : ''}
+        ${pub && canKick(pub) ? `<div style="margin-top:10px"><button class="danger" onclick="kick('${pub.kind}','${pub.c.id}')">disconnect</button></div>` : ''}
       </div>`;
     }).join('') : '<div class="empty">No stream is being published right now.</div>';
 
@@ -134,7 +137,7 @@ async function refresh() {
     $('readers').innerHTML = readers.length ? `<div class="card"><table>
       <tr><th>stream</th><th>protocol</th><th>from</th><th>connected</th><th>sent</th><th></th></tr>
       ${readers.map(x => `<tr><td>${esc(x.c.path)}</td><td>${esc(x.proto)}</td><td>${esc(ipOf(x.c.remoteAddr))}</td><td>${since(x.c.created)}</td><td>${fmtBytes(x.c.bytesSent)}</td>
-        <td>${isMine(pubs[x.c.path]) ? `<button class="danger" onclick="kick('${x.kind}','${x.c.id}')">kick</button>` : ''}</td></tr>`).join('')}
+        <td>${canKick(pubs[x.c.path]) ? `<button class="danger" onclick="kick('${x.kind}','${x.c.id}')">kick</button>` : ''}</td></tr>`).join('')}
     </table></div>` : '<div class="empty">No viewers connected.</div>';
 
     $('status').textContent = 'updated ' + new Date().toLocaleTimeString();
@@ -156,6 +159,7 @@ const keyApi = async (reset) => {
   if (!r.ok) throw new Error(r.status + ' /keys/me');
   const j = await r.json();
   me = j.user;
+  admin = j.admin === true;
   return j.key;
 };
 const fullKey = () => ($('sname').value.trim() || 'live') + '?pass=' + myKey;
