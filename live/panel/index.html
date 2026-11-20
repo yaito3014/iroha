@@ -47,7 +47,7 @@
   <section>
     <h3>Your stream key</h3>
     <div class="card">
-      <div class="meta">OBS: Service <b>Custom</b> · Server <code>rtmp://<span class="host"></span>:1935/</code> · Stream key below</div>
+      <div class="meta">OBS: Service <b>Custom</b> · Server <code>rtmps://<span class="host"></span>:1936/</code> · Stream key below (plain <code>rtmp://<span class="host"></span>:1935/</code> still works for now, but sends the key unencrypted)</div>
       <div class="urls">
         <div><span class="meta">stream name</span><input id="sname" value="live" size="16" oninput="renderKey()"></div>
         <div><code id="skey">loading…</code><button id="kshow" onclick="toggleKey()">show</button><button id="kcopy" onclick="copyKey()">copy</button><button class="danger" id="kreset" onclick="resetKey()">reset</button></div>
@@ -76,7 +76,7 @@ const isMine = (pub) => !!pub && me !== null && pub.c.user === me;
 const fmtBytes = (b) => b > 1e9 ? (b/1e9).toFixed(2)+' GB' : b > 1e6 ? (b/1e6).toFixed(1)+' MB' : b > 1e3 ? (b/1e3).toFixed(0)+' kB' : b+' B';
 const since = (iso) => { if (!iso) return '–'; const s = Math.max(0, (Date.now() - new Date(iso)) / 1000); const h = Math.floor(s/3600), m = Math.floor(s%3600/60), x = Math.floor(s%60); return (h ? h+'h ' : '') + (m ? m+'m ' : '') + x + 's'; };
 const esc = (s) => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const PROTO = { rtmpconns: 'RTMP', rtspsessions: 'RTSP', webrtcsessions: 'WebRTC' };
+const PROTO = { rtmpconns: 'RTMP', rtmpsconns: 'RTMPS', rtspsessions: 'RTSP', webrtcsessions: 'WebRTC' };
 const ipOf = (a) => (a || '').replace(/:\d+$/, '').replace(/^\[|\]$/g, '');
 const copy = (t) => navigator.clipboard && navigator.clipboard.writeText(t);
 window.copyText = copy;
@@ -87,18 +87,19 @@ const rate = (key, bytes) => { const now = Date.now(); const p = last[key]; last
 const fmtRate = (r) => r == null ? '' : (r/1e6).toFixed(2) + ' Mbps';
 
 async function kick(kind, id) {
-  if (!confirm('Disconnect this ' + (kind === 'rtmpconns' ? 'publisher' : 'viewer') + '?')) return;
+  if (!confirm('Disconnect this ' + (/^rtmps?conns$/.test(kind) ? 'publisher' : 'viewer') + '?')) return;
   try { await api('/v3/' + kind + '/kick/' + id, true); refresh(); } catch (e) { alert(e.message); }
 }
 window.kick = kick;
 
 async function refresh() {
   try {
-    const [paths, rtmp, rtsp, webrtc] = await Promise.all([
-      api('/v3/paths/list'), api('/v3/rtmpconns/list'), api('/v3/rtspsessions/list'), api('/v3/webrtcsessions/list')
+    const [paths, rtmp, rtmps, rtsp, webrtc] = await Promise.all([
+      api('/v3/paths/list'), api('/v3/rtmpconns/list'), api('/v3/rtmpsconns/list'), api('/v3/rtspsessions/list'), api('/v3/webrtcsessions/list')
     ]);
     const pubs = {};
     rtmp.items.filter(c => c.state === 'publish').forEach(c => pubs[c.path] = { kind: 'rtmpconns', c });
+    rtmps.items.filter(c => c.state === 'publish').forEach(c => pubs[c.path] = { kind: 'rtmpsconns', c });
     rtsp.items.filter(c => c.state === 'publish').forEach(c => pubs[c.path] = { kind: 'rtspsessions', c });
     webrtc.items.filter(c => c.state === 'publish').forEach(c => pubs[c.path] = { kind: 'webrtcsessions', c });
 
@@ -128,6 +129,7 @@ async function refresh() {
       ...rtsp.items.filter(c => c.state === 'read').map(c => ({ kind: 'rtspsessions', proto: 'RTSP ' + (c.transport || ''), c })),
       ...webrtc.items.filter(c => c.state === 'read').map(c => ({ kind: 'webrtcsessions', proto: 'WebRTC', c })),
       ...rtmp.items.filter(c => c.state === 'read').map(c => ({ kind: 'rtmpconns', proto: 'RTMP', c })),
+      ...rtmps.items.filter(c => c.state === 'read').map(c => ({ kind: 'rtmpsconns', proto: 'RTMPS', c })),
     ];
     $('readers').innerHTML = readers.length ? `<div class="card"><table>
       <tr><th>stream</th><th>protocol</th><th>from</th><th>connected</th><th>sent</th><th></th></tr>

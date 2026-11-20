@@ -372,6 +372,17 @@ class AuthorizeTest(unittest.TestCase):
         self.app.reset_key("alice")
         self.assertEqual(self.api.posts, [])  # already kicked, forgotten
 
+    def test_reset_kicks_rtmps_streams(self) -> None:
+        # MediaMTX reports RTMPS publishes as protocol "rtmp" too, but lists
+        # (and kicks) them under rtmpsconns.
+        self.app.authorize(publish(self.alice, id="s1", protocol="rtmp"))
+        self.api.gone.add("/v3/rtmpconns/kick/s1")
+        with self.assertNoLogs("keys", "WARNING"):
+            self.app.reset_key("alice")
+        self.assertEqual(
+            self.api.posts, ["/v3/rtmpconns/kick/s1", "/v3/rtmpsconns/kick/s1"]
+        )
+
     def test_reset_tolerates_ended_and_unkickable_streams(self) -> None:
         self.app.authorize(publish(self.alice, id="gone", protocol="rtmp"))
         self.app.authorize(publish(self.alice, id="h", protocol="hls"))
@@ -441,6 +452,19 @@ class ApiFilterTest(unittest.TestCase):
         )
         self.assertEqual(body["itemCount"], 3)
 
+    def test_rtmps_list_hides_queries_and_names_the_streamer(self) -> None:
+        self.api.data["/v3/rtmpsconns/list"] = {
+            "items": [
+                {"id": A, "state": "publish", "query": "pass=SECRET", "user": ""}
+            ],
+        }
+        status, body = self.app.api_list("/v3/rtmpsconns/list")
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            body,
+            {"items": [{"id": A, "state": "publish", "query": "", "user": "alice"}]},
+        )
+
     def test_paths_list_passes_through(self) -> None:
         self.api.data["/v3/paths/list"] = {"items": [{"name": "show", "ready": True}]}
         self.assertEqual(
@@ -462,6 +486,10 @@ class ApiFilterTest(unittest.TestCase):
     def test_kick_own_stream(self) -> None:
         self.assertEqual(self.app.api_kick("alice", "rtmpconns", A), 200)
         self.assertEqual(self.api.posts, [f"/v3/rtmpconns/kick/{A}"])
+
+    def test_kick_own_rtmps_stream(self) -> None:
+        self.assertEqual(self.app.api_kick("alice", "rtmpsconns", A), 200)
+        self.assertEqual(self.api.posts, [f"/v3/rtmpsconns/kick/{A}"])
 
     def test_kick_viewer_of_own_stream(self) -> None:
         self.assertEqual(self.app.api_kick("alice", "rtspsessions", R), 200)
@@ -580,6 +608,13 @@ class ConnRecordTest(unittest.TestCase):
             with self.subTest(app=app):
                 owners = [app.owner_of(i) for i in ("a1", "a2", "a3", "b1")]
                 self.assertEqual(owners, ["alice", None, "alice", None])
+
+    def test_prune_keeps_open_rtmps_connections(self) -> None:
+        # Recorded as protocol "rtmp", but listed under rtmpsconns.
+        self.app.authorize(publish(self.alice, id="s1", protocol="rtmp"))
+        self.api.data["/v3/rtmpsconns/list"] = live("s1")
+        self.app.prune()
+        self.assertEqual(self.app.owner_of("s1"), "alice")
 
     def test_a_disabled_server_has_no_connections(self) -> None:
         # srt is off in mediamtx.yml, so MediaMTX answers 404 for its list.
