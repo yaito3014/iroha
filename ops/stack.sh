@@ -20,7 +20,10 @@ stack_backup() {
     # SQLite + node keys. Stop headscale so the copy is consistent; the
     # following `docker compose up -d` starts it again.
     docker compose stop headscale &&
-        backup_volume headscale /var/lib/headscale "$1/headscale-data.tgz"
+        backup_volume headscale /var/lib/headscale "$1/headscale-data.tgz" || return 1
+    [ "$live" = 1 ] || return 0
+    # Stream keys. keys.py writes by atomic rename, so no need to stop it.
+    backup_volume keys /data "$1/live-keys.tgz"
 }
 
 stack_health() {

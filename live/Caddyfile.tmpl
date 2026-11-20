@@ -18,6 +18,17 @@
         uri strip_prefix /api
         reverse_proxy mediamtx:9997
     }
+    # The caller's own stream key. forward_auth replaces any client-sent
+    # X-Authentik-Username with Authentik's, which the keys service trusts.
+    handle /keys/* {
+        forward_auth https://{{ID_HOST}} {
+            uri /outpost.goauthentik.io/auth/caddy
+            copy_headers X-Authentik-Username
+            trusted_proxies private_ranges
+            header_up Host {upstream_hostport}
+        }
+        reverse_proxy keys:8001
+    }
     handle / {
         forward_auth https://{{ID_HOST}} {
             uri /outpost.goauthentik.io/auth/caddy
@@ -28,7 +39,7 @@
         reverse_proxy panel:80
     }
     # Everything else (viewer pages, WHIP/WHEP) goes to MediaMTX, unauthenticated:
-    # MediaMTX's own users decide who may read and publish.
+    # MediaMTX asks the keys service who may publish; anyone may read.
     handle {
         reverse_proxy mediamtx:8889
     }
