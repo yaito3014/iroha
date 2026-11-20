@@ -27,8 +27,8 @@ governed by the same account system as the rest of the fleet.
 - A reachable Authentik instance with an OAuth2 provider + application for
   Headscale — see [Authentik provider](#authentik-provider)
 - For [live](#live-streaming) (on by default): a second A record (`live.`),
-  ports 1935/tcp, 554/tcp and 8189/tcp+udp open, and a forward-auth Proxy
-  provider in Authentik — or turn it off by removing `live` from
+  ports 1935/tcp, 1936/tcp, 554/tcp and 8189/tcp+udp open, and a forward-auth
+  Proxy provider in Authentik — or turn it off by removing `live` from
   `COMPOSE_PROFILES`
 
 ## Quick start
@@ -77,7 +77,7 @@ with a name/email collision against the old row.
 
 `live/` is a separate part of this stack, on by default: a
 [MediaMTX](https://github.com/bluenviron/mediamtx) streaming server (OBS
-publishes over RTMP; viewers watch over WebRTC or RTSP) plus a small control
+publishes over RTMPS; viewers watch over WebRTC or RTSP) plus a small control
 panel. It is kept apart from Headscale on purpose:
 
 - **Its own directory.** `live/` holds its compose file, MediaMTX config
@@ -106,10 +106,12 @@ Routing on `LIVE_HOST`:
 
 Every member of the Authentik group `streamers` has their own stream key,
 shown (and reset) on the panel. In OBS, use the server
-`rtmp://<LIVE_HOST>:1935/` and the stream key `<name>?pass=<key>`, which the
-panel builds for you. The key alone identifies the streamer; `<name>` is free
-and becomes the stream path. A name that is live cannot be taken over by
-another publisher (`overridePublisher: false`).
+`rtmps://<LIVE_HOST>:1936/` and the stream key `<name>?pass=<key>`, which the
+panel builds for you. Plain `rtmp://<LIVE_HOST>:1935/` still works while
+streamers switch over, but it sends the key unencrypted; it will be turned
+off. The key alone identifies the streamer; `<name>` is free and becomes the
+stream path. A name that is live cannot be taken over by another publisher
+(`overridePublisher: false`).
 
 MediaMTX asks the `keys` service (`live/keys/keys.py`) about every publish. It
 allows the stream if the key belongs to a user who is currently in
@@ -149,8 +151,8 @@ LIVE_AUTHENTIK_TOKEN=<token>    # see "In Authentik" below
 
 You also need:
 
-- **Ports:** open 1935/tcp (RTMP), 554/tcp (RTSP) and 8189/tcp+udp (WebRTC
-  media).
+- **Ports:** open 1936/tcp (RTMPS), 1935/tcp (RTMP, until it is turned
+  off), 554/tcp (RTSP) and 8189/tcp+udp (WebRTC media).
 - **In Authentik:**
   - a group `streamers`;
   - a Proxy provider in forward-auth mode for `LIVE_HOST`, with its
@@ -163,6 +165,14 @@ You also need:
   `X-Forwarded-*` headers (`trusted_proxies`), or the outpost cannot match the
   application.
 
+RTMPS uses Caddy's certificate for `LIVE_HOST`: MediaMTX mounts only that
+certificate's directory from Caddy's data volume, read-only, and reloads the
+certificate when Caddy renews it. The directory is Let's Encrypt's, so the
+live site is pinned to Let's Encrypt (no ZeroSSL fallback). On a new host,
+Docker cannot start MediaMTX until Caddy has obtained that certificate:
+`docker compose up -d` reports the error for `mediamtx`; run it again once
+`https://<LIVE_HOST>/` serves a valid certificate (usually under a minute).
+
 ### Turning live on or off
 
 On a running host, changing `COMPOSE_PROFILES` isn't enough. Caddy only reads
@@ -170,12 +180,13 @@ its config when it starts or reloads, and Compose ignores the containers of a
 profile that's turned off, so they would keep running.
 
 To turn it on, add `live` to `COMPOSE_PROFILES` and set the `LIVE_*` values,
-then:
+then reload Caddy first, so it obtains the certificate MediaMTX needs for
+RTMPS, and start the services once `https://<LIVE_HOST>/` serves it:
 
 ```sh
 ./setup.sh
-docker compose up -d
 docker compose exec -w /etc/caddy caddy caddy reload
+docker compose up -d
 ```
 
 To turn it off, remove the containers first, while the profile is still known:

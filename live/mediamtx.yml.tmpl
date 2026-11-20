@@ -13,8 +13,14 @@ rtspAddress: :8554
 rtspTransports: [tcp]
 rtspEncryption: "no"
 rtmp: yes
+# RTMPS on :1936 with Caddy's certificate for {{LIVE_HOST}} (mounted from
+# caddy-data; MediaMTX reloads it when Caddy renews it). Plain RTMP on :1935
+# stays open until every streamer has switched OBS over.
+rtmpEncryption: "optional"
 rtmpAddress: :1935
-rtmpEncryption: "no"
+rtmpsAddress: :1936
+rtmpServerCert: /certs/{{LIVE_HOST}}.crt
+rtmpServerKey: /certs/{{LIVE_HOST}}.key
 hls: no
 srt: no
 moq: no

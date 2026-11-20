@@ -1,6 +1,11 @@
 # Rendered by setup.sh to caddy/sites/live.caddy (when the live profile is on),
 # which the main Caddyfile imports — edit the .tmpl, not the output.
 {{LIVE_HOST}} {
+    # Let's Encrypt only (no ZeroSSL fallback): MediaMTX reads this site's
+    # certificate for RTMPS from the issuer's directory in caddy-data.
+    tls {
+        issuer acme
+    }
     # Control panel + MediaMTX API: login via Authentik ({{ID_HOST}}) using
     # forward auth against its embedded outpost.
     handle /outpost.goauthentik.io/* {
