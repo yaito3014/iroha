@@ -121,9 +121,9 @@ The panel reads MediaMTX's API through the keys service, never directly. It
 passes only the lists the panel shows (paths, RTMP connections, RTSP and
 WebRTC sessions), blanks every connection's query (where RTMP carries the
 key), and fills each connection's `user` with the streamer whose key opened
-it. That record lives in memory, so after the keys service restarts, streams
-already running show no streamer until they reconnect. A streamer can kick
-only their own stream and its viewers. Removing
+it. That record (`conns.json` in the `live-keys` volume) survives restarts of
+the keys service; once a minute it drops the connections MediaMTX no longer
+has open. A streamer can kick only their own stream and its viewers. Removing
 someone from `streamers` stops their next publish; to end a stream they are
 running, kick it from iroha's shell, where MediaMTX's own API is on
 `127.0.0.1:9997`:

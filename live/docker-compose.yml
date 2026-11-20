@@ -38,7 +38,7 @@ services:
       AUTHENTIK_GROUP: streamers
     volumes:
       - ./keys/keys.py:/app/keys.py:ro
-      - live-keys:/data        # keys.json: the stream keys; back it up
+      - live-keys:/data        # keys.json (the stream keys; back it up), conns.json
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]

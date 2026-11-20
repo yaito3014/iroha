@@ -30,7 +30,6 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
-from collections import OrderedDict
 from collections.abc import Callable, Mapping
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -64,13 +63,26 @@ LIST_ENDPOINTS = frozenset(
 KICKABLE = frozenset({"rtmpconns", "rtspsessions", "webrtcsessions"})
 
 MAX_BODY = 64 * 1024
-# Connections remembered for attribution and kicks; old ones fall off first.
-MAX_CONNS = 1024
+# How often ended connections are dropped from the record (seconds).
+PRUNE_INTERVAL = 60
 
 
 def _field(req: Mapping[str, object], key: str) -> str:
     value = req.get(key)
     return value if isinstance(value, str) else ""
+
+
+def _replace_json(path: Path, data: object, *, durable: bool) -> None:
+    """Atomically replace `path` with `data` as JSON, readable by its owner."""
+    tmp = path.with_name(path.name + ".tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        os.fchmod(f.fileno(), 0o600)
+        json.dump(data, f)
+        if durable:
+            f.flush()
+            os.fsync(f.fileno())
+    os.replace(tmp, path)
 
 
 class KeyStore:
@@ -96,14 +108,7 @@ class KeyStore:
         return dict(data)
 
     def _save(self) -> None:
-        tmp = self._path.with_name(self._path.name + ".tmp")
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w") as f:
-            os.fchmod(f.fileno(), 0o600)
-            json.dump(self._keys, f)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, self._path)
+        _replace_json(self._path, self._keys, durable=True)
 
     def get(self, user: str) -> str | None:
         with self._lock:
@@ -246,14 +251,45 @@ class _Conn(NamedTuple):
 
 
 class App:
-    def __init__(self, store: KeyStore, members: Members, api: MediaMTX) -> None:
+    def __init__(
+        self, store: KeyStore, members: Members, api: MediaMTX, conns_file: Path
+    ) -> None:
         self.store = store
         self.members = members
         self.api = api
         self._lock = threading.Lock()
-        # Connection id -> who published on it. In memory only: a restart
-        # forgets running streams (they keep running, unattributed).
-        self._conns: OrderedDict[str, _Conn] = OrderedDict()
+        # Connection id -> who published on it, saved to conns_file so a
+        # restart of this service keeps it while MediaMTX keeps the streams.
+        # prune() drops the connections that ended.
+        self._conns_file = conns_file
+        self._conns = self._load_conns()
+
+    def _load_conns(self) -> dict[str, _Conn]:
+        try:
+            data = json.loads(self._conns_file.read_text())
+            return {
+                str(cid): _Conn(*(str(v) for v in conn))
+                for cid, conn in data.items()
+                if isinstance(conn, list) and len(conn) == 2
+            }
+        except FileNotFoundError:
+            return {}
+        except (OSError, ValueError, AttributeError, TypeError) as e:
+            log.warning("ignoring %s: %s", self._conns_file, e)
+            return {}
+
+    def _save_conns(self) -> None:
+        """Write the record; call with the lock held."""
+        try:
+            # Not fsynced: it only has to outlive this process, not the host
+            # (MediaMTX's connections do not survive a host crash either).
+            _replace_json(
+                self._conns_file,
+                {cid: list(conn) for cid, conn in self._conns.items()},
+                durable=False,
+            )
+        except OSError as e:
+            log.warning("cannot save %s: %s", self._conns_file, e)
 
     def authorize(self, req: Mapping[str, object]) -> bool:
         """Decide one MediaMTX auth request (its JSON body, decoded)."""
@@ -295,9 +331,7 @@ class App:
             if self.store.owner(key) != user:
                 return False
             self._conns[conn_id] = _Conn(user, protocol)
-            self._conns.move_to_end(conn_id)
-            while len(self._conns) > MAX_CONNS:
-                self._conns.popitem(last=False)
+            self._save_conns()
         return True
 
     def owner_of(self, conn_id: str) -> str | None:
@@ -323,10 +357,38 @@ class App:
             mine = [(cid, c) for cid, c in self._conns.items() if c.user == user]
             for cid, _ in mine:
                 del self._conns[cid]
+            self._save_conns()
         for cid, conn in mine:
             self._kick(conn.protocol, cid)
         log.info("reset key user=%r, kicked %d session(s)", user, len(mine))
         return key
+
+    def prune(self) -> None:
+        """Drop the connections MediaMTX no longer has open."""
+        with self._lock:
+            before = set(self._conns)
+        # Connections recorded from here on are kept: the lists may predate them.
+        open_ids: set[str] = set()
+        for endpoint in KICK_ENDPOINTS.values():
+            path = f"/v3/{endpoint}/list"
+            try:
+                data = self.api.get(path)
+            except UpstreamError as e:
+                if e.status == 404:  # that server is off: nothing open there
+                    continue
+                log.warning("prune skipped: %s: %s", path, e)
+                return
+            items = data.get("items") if isinstance(data, dict) else None
+            if not isinstance(items, list):
+                log.warning("prune skipped: %s: unexpected response", path)
+                return
+            open_ids.update(str(i.get("id")) for i in items if isinstance(i, dict))
+        with self._lock:
+            ended = (before - open_ids) & self._conns.keys()
+            for cid in ended:
+                del self._conns[cid]
+            if ended:
+                self._save_conns()
 
     def api_list(self, path: str) -> tuple[int, object]:
         """One of the panel's MediaMTX lists, with keys removed."""
@@ -483,6 +545,15 @@ def make_keys_server(address: tuple[str, int], app: App) -> ThreadingHTTPServer:
     return ThreadingHTTPServer(address, KeysHandler)
 
 
+def _prune_forever(app: App) -> None:
+    while True:
+        time.sleep(PRUNE_INTERVAL)
+        try:
+            app.prune()
+        except Exception:
+            log.exception("prune failed")
+
+
 def main() -> None:
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
@@ -499,10 +570,12 @@ def main() -> None:
         KeyStore(Path(env.get("KEYS_FILE", "/data/keys.json"))),
         members,
         MediaMTXClient(env.get("MEDIAMTX_API", "http://mediamtx:9997")),
+        Path(env.get("CONNS_FILE", "/data/conns.json")),
     )
     auth = make_auth_server(("0.0.0.0", 8000), app)
     keys = make_keys_server(("0.0.0.0", 8001), app)
     threading.Thread(target=auth.serve_forever, daemon=True).start()
+    threading.Thread(target=_prune_forever, args=(app,), daemon=True).start()
     log.info("auth hook on :8000, panel API on :8001")
     keys.serve_forever()
 

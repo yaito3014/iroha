@@ -41,8 +41,11 @@ class FakeApi:
         self.data: dict[str, object] = {}
         self.posts: list[str] = []
         self.gone: set[str] = set()
+        self.down = False
 
     def get(self, path: str) -> object:
+        if self.down:
+            raise UpstreamError(502)
         if path not in self.data:
             raise UpstreamError(404)
         return copy.deepcopy(self.data[path])
@@ -290,7 +293,12 @@ class AuthorizeTest(unittest.TestCase):
         self.dir = tempfile.TemporaryDirectory()
         self.store = KeyStore(Path(self.dir.name) / "keys.json")
         self.api = FakeApi()
-        self.app = App(self.store, FakeMembers("alice"), self.api)
+        self.app = App(
+            self.store,
+            FakeMembers("alice"),
+            self.api,
+            Path(self.dir.name) / "conns.json",
+        )
         self.alice = self.store.reset("alice")
         self.bob = self.store.reset("bob")
 
@@ -391,7 +399,12 @@ class ApiFilterTest(unittest.TestCase):
         self.dir = tempfile.TemporaryDirectory()
         self.store = KeyStore(Path(self.dir.name) / "keys.json")
         self.api = FakeApi()
-        self.app = App(self.store, FakeMembers("alice", "bob"), self.api)
+        self.app = App(
+            self.store,
+            FakeMembers("alice", "bob"),
+            self.api,
+            Path(self.dir.name) / "conns.json",
+        )
         alice, bob = self.store.reset("alice"), self.store.reset("bob")
         self.app.authorize(publish(alice, id=A, path="show"))
         self.app.authorize(publish(bob, id=B, path="bobshow"))
@@ -507,12 +520,110 @@ def running(server: ThreadingHTTPServer) -> Iterator[str]:
         server.server_close()
 
 
+def live(*ids: str) -> dict[str, object]:
+    return {"items": [{"id": i} for i in ids]}
+
+
+class ConnRecordTest(unittest.TestCase):
+    """Who published on which connection: kept across restarts, pruned by
+    asking MediaMTX which connections are still open."""
+
+    def setUp(self) -> None:
+        self.dir = tempfile.TemporaryDirectory()
+        self.store = KeyStore(Path(self.dir.name) / "keys.json")
+        self.api = FakeApi()
+        self.app = self.new_app()
+        self.alice = self.store.reset("alice")
+        self.bob = self.store.reset("bob")
+        self.api.data.update(
+            {
+                "/v3/rtmpconns/list": live(),
+                "/v3/rtspsessions/list": live(),
+                "/v3/webrtcsessions/list": live(),
+            }
+        )
+
+    def tearDown(self) -> None:
+        self.dir.cleanup()
+
+    def new_app(self) -> App:
+        conns = Path(self.dir.name) / "conns.json"
+        return App(self.store, FakeMembers("alice", "bob"), self.api, conns)
+
+    def test_a_restart_keeps_the_record(self) -> None:
+        self.app.authorize(publish(self.alice, id="a1", protocol="rtmp"))
+        restarted = self.new_app()
+        self.assertEqual(restarted.owner_of("a1"), "alice")
+        restarted.reset_key("alice")
+        self.assertEqual(self.api.posts, ["/v3/rtmpconns/kick/a1"])
+
+    def test_a_bad_record_file_starts_empty(self) -> None:
+        (Path(self.dir.name) / "conns.json").write_text("[1]")
+        with self.assertLogs("keys", "WARNING"):
+            app = self.new_app()
+        self.assertIsNone(app.owner_of("a1"))
+
+    def test_many_other_publishes_do_not_push_a_stream_out(self) -> None:
+        self.app.authorize(publish(self.alice, id="a1"))
+        for i in range(1500):
+            self.app.authorize(publish(self.bob, id=f"b{i}"))
+        self.assertEqual(self.app.owner_of("a1"), "alice")
+
+    def test_prune_drops_ended_connections_only(self) -> None:
+        for conn_id, protocol in (("a1", "rtmp"), ("a2", "rtsp"), ("a3", "webrtc")):
+            self.app.authorize(publish(self.alice, id=conn_id, protocol=protocol))
+        self.app.authorize(publish(self.bob, id="b1"))
+        self.api.data["/v3/rtmpconns/list"] = live("a1")
+        self.api.data["/v3/webrtcsessions/list"] = live("a3", "viewer")
+        self.app.prune()
+        for app in (self.app, self.new_app()):  # pruned on disk too
+            with self.subTest(app=app):
+                owners = [app.owner_of(i) for i in ("a1", "a2", "a3", "b1")]
+                self.assertEqual(owners, ["alice", None, "alice", None])
+
+    def test_a_disabled_server_has_no_connections(self) -> None:
+        # srt is off in mediamtx.yml, so MediaMTX answers 404 for its list.
+        self.app.authorize(publish(self.alice, id="s1", protocol="srt"))
+        self.app.prune()
+        self.assertIsNone(self.app.owner_of("s1"))
+
+    def test_prune_keeps_everything_if_mediamtx_does_not_answer(self) -> None:
+        self.app.authorize(publish(self.alice, id="a1"))
+        for broken in ("down", "not a list"):
+            with self.subTest(broken=broken):
+                self.api.down = broken == "down"
+                if broken == "not a list":
+                    self.api.data["/v3/rtspsessions/list"] = {"items": None}
+                with self.assertLogs("keys", "WARNING"):
+                    self.app.prune()
+                self.assertEqual(self.app.owner_of("a1"), "alice")
+
+    def test_prune_keeps_connections_recorded_while_it_runs(self) -> None:
+        # The lists are read before a1 is recorded, so they cannot show it.
+        get = self.api.get
+
+        def get_then_publish(path: str) -> object:
+            data = get(path)
+            if self.app.owner_of("a1") is None:
+                self.app.authorize(publish(self.alice, id="a1"))
+            return data
+
+        self.api.get = get_then_publish  # type: ignore[method-assign]
+        self.app.prune()
+        self.assertEqual(self.app.owner_of("a1"), "alice")
+
+
 class ServersTest(unittest.TestCase):
     def setUp(self) -> None:
         self.dir = tempfile.TemporaryDirectory()
         self.store = KeyStore(Path(self.dir.name) / "keys.json")
         self.api = FakeApi()
-        self.app = App(self.store, FakeMembers("alice"), self.api)
+        self.app = App(
+            self.store,
+            FakeMembers("alice"),
+            self.api,
+            Path(self.dir.name) / "conns.json",
+        )
 
     def tearDown(self) -> None:
         self.dir.cleanup()
