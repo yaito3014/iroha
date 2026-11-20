@@ -42,12 +42,13 @@ API_NETWORKS = tuple(
     ipaddress.ip_network(n) for n in ("127.0.0.1/32", "::1/128", "172.16.0.0/12")
 )
 
-# MediaMTX auth "protocol" -> its API's connection list, for kicking.
+# MediaMTX auth "protocol" -> its API's connection lists, for kicking. RTMPS
+# publishes also report "rtmp", so a connection is looked for in both lists.
 KICK_ENDPOINTS = {
-    "rtmp": "rtmpconns",
-    "rtsp": "rtspsessions",
-    "webrtc": "webrtcsessions",
-    "srt": "srtconns",
+    "rtmp": ("rtmpconns", "rtmpsconns"),
+    "rtsp": ("rtspsessions",),
+    "webrtc": ("webrtcsessions",),
+    "srt": ("srtconns",),
 }
 
 # The API lists the panel reads; everything else in MediaMTX's API is hidden.
@@ -55,12 +56,13 @@ LIST_ENDPOINTS = frozenset(
     {
         "/v3/paths/list",
         "/v3/rtmpconns/list",
+        "/v3/rtmpsconns/list",
         "/v3/rtspsessions/list",
         "/v3/webrtcsessions/list",
     }
 )
 # Connection lists the panel may kick from (srt is off in mediamtx.yml).
-KICKABLE = frozenset({"rtmpconns", "rtspsessions", "webrtcsessions"})
+KICKABLE = frozenset({"rtmpconns", "rtmpsconns", "rtspsessions", "webrtcsessions"})
 
 MAX_BODY = 64 * 1024
 # How often ended connections are dropped from the record (seconds).
@@ -340,15 +342,18 @@ class App:
         return conn.user if conn else None
 
     def _kick(self, protocol: str, conn_id: str) -> None:
-        endpoint = KICK_ENDPOINTS.get(protocol)
-        if endpoint is None:
+        endpoints = KICK_ENDPOINTS.get(protocol)
+        if endpoints is None:
             log.warning("cannot kick %s connection %s", protocol, conn_id)
             return
-        try:
-            self.api.post(f"/v3/{endpoint}/kick/{conn_id}")
-        except UpstreamError as e:
-            if e.status != 404:  # 404: the connection already ended
-                log.warning("kick %s %s: %s", protocol, conn_id, e)
+        for endpoint in endpoints:
+            try:
+                self.api.post(f"/v3/{endpoint}/kick/{conn_id}")
+                return
+            except UpstreamError as e:
+                if e.status != 404:  # 404: not in this list, or already ended
+                    log.warning("kick %s %s: %s", protocol, conn_id, e)
+                    return
 
     def reset_key(self, user: str) -> str:
         """Issue a new key, then end the streams started with the old one."""
