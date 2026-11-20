@@ -11,10 +11,10 @@ services:
     restart: unless-stopped
     ports:
       - "1935:1935"        # RTMP ingest from OBS
-      - "554:8554"         # RTSP output for VRChat (rtspt://<LIVE_HOST>/<key>)
+      - "554:8554"         # RTSP output for VRChat (rtspt://<LIVE_HOST>/<name>)
       - "8189:8189/udp"    # WebRTC media (ICE UDP)
       - "8189:8189/tcp"    # WebRTC media fallback (ICE TCP)
-      - "127.0.0.1:9997:9997"  # control API, local only (Caddy reaches it as mediamtx:9997)
+      - "127.0.0.1:9997:9997"  # control API, local only (the keys service reaches it as mediamtx:9997)
     volumes:
       - ./mediamtx.yml:/mediamtx.yml:ro   # rendered by setup.sh
 
