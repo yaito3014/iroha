@@ -609,6 +609,13 @@ class ConnRecordTest(unittest.TestCase):
                 owners = [app.owner_of(i) for i in ("a1", "a2", "a3", "b1")]
                 self.assertEqual(owners, ["alice", None, "alice", None])
 
+    def test_prune_keeps_open_rtmps_connections(self) -> None:
+        # Recorded as protocol "rtmp", but listed under rtmpsconns.
+        self.app.authorize(publish(self.alice, id="s1", protocol="rtmp"))
+        self.api.data["/v3/rtmpsconns/list"] = live("s1")
+        self.app.prune()
+        self.assertEqual(self.app.owner_of("s1"), "alice")
+
     def test_a_disabled_server_has_no_connections(self) -> None:
         # srt is off in mediamtx.yml, so MediaMTX answers 404 for its list.
         self.app.authorize(publish(self.alice, id="s1", protocol="srt"))

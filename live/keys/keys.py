@@ -374,7 +374,7 @@ class App:
             before = set(self._conns)
         # Connections recorded from here on are kept: the lists may predate them.
         open_ids: set[str] = set()
-        for endpoint in KICK_ENDPOINTS.values():
+        for endpoint in (e for es in KICK_ENDPOINTS.values() for e in es):
             path = f"/v3/{endpoint}/list"
             try:
                 data = self.api.get(path)
